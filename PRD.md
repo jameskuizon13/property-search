@@ -29,7 +29,7 @@ The stack is a Rails 8.1 API with PostgreSQL 17 and ActionCable, plus a Vite Rea
 | --- | --- | --- |
 | Repo layout | `api/` + `web/` folders, root `Makefile` (`make setup`, `make dev`, `make test`) | Two apps don't need a monorepo tool; `make` gives one entry point with zero setup |
 | Backend | Rails 8.1 `--api`, Puma | Required by the brief |
-| Database | PostgreSQL 17, `citext` + `pg_trgm` extensions | Required; trigram indexes make free-text search fast |
+| Database | PostgreSQL 17, `pg_trgm` extension | Required; trigram indexes make free-text search fast |
 | Pagination | Cursor (keyset) pagination, infinite scroll | Infinite scroll is on the rubric; keyset stays fast at any depth, and newly added listings never shift the rows already loaded. One honest limit: in a price sort, a listing whose price changes mid-scroll can show up twice or be missed (see Risks) |
 | Serialisation | Alba, `lower_camel` keys | Light, plain Ruby, camelCase JSON for React |
 | Auth | One JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production), fixed 24-hour `exp` (sliding renewal is Batch 10) | The brief allows JWT or sessions. A JWT needs no server-side session store, and the `HttpOnly` cookie keeps it out of reach of JavaScript, so an XSS bug can't steal it. One token covers REST and the WebSocket. Assumes web and API on the same site (e.g. `app.` and `api.` subdomains). Batch 1 is the minimum secure baseline; extra hardening is Batch 10. Full design under Security hardening. |
@@ -114,7 +114,7 @@ Each requirement below has acceptance criteria a test can check.
 
 **FR-5 Auth**
 
-- Sign up, log in, log out, and `GET /me`. Email is unique and case-insensitive. Password is 12–72 characters (72 is bcrypt's byte limit). Rejecting breached passwords is a Batch 10 item.
+- Sign up, log in, log out, and `GET /me`. Email is unique and case-insensitive (stored trimmed and lowercased). Password is 12–72 characters (72 is bcrypt's byte limit). Rejecting breached passwords is a Batch 10 item.
 - Search is public. Watchlist endpoints and the cable connection require auth.
 
 **FR-6 Real-time updates**
@@ -174,7 +174,7 @@ The schema has four tables. Every index maps to a real query, and each one is sh
 
 | Table | Key columns | Constraints |
 | --- | --- | --- |
-| `users` | `email` (citext), `password_digest`, `name`, `role` (enum: user, admin; default user; added in Batch 2 so the seed can create the admin) | unique `email`; CHECK on `role` |
+| `users` | `email` (string, stored lowercased via `normalizes`), `password_digest`, `name`, `role` (enum: user, admin; default user; added in Batch 2 so the seed can create the admin) | unique `email`; CHECK on `role` |
 | `properties` | `street_address`, `suburb`, `state` (NSW…ACT), `postcode` (string, CHECK `^[0-9]{4}$`), `latitude`, `longitude`, `price_cents` (bigint, nullable), `price_display` (e.g. “Contact agent”), `bedrooms`, `bathrooms`, `car_spaces` (smallint), `land_size_sqm`, `property_type` (string), `status` (string: for\_sale, under\_offer, sold, withdrawn), `listed_at`, `image_url`, `lock_version` | NOT NULL + CHECK on the allowed string values and non-negative numbers |
 | `watchlist_items` | `user_id`, `property_id`, `created_at` | FKs `on_delete: cascade`, unique (`user_id`, `property_id`) |
 | `property_events` | `property_id`, `kind` (price\_changed, status\_changed), `from_value`, `to_value`, `created_at` | FK; written in the same transaction as the change (`after_update`, not `after_commit`) |
@@ -367,7 +367,7 @@ Security is split in two. **Batch 1 is the minimum that is still secure**: every
 **Login and passwords**
 
 - `has_secure_password` (bcrypt) and `User.authenticate_by`, which takes the same time whether or not the email exists. Errors are a generic "Invalid email or password".
-- Email unique and case-insensitive (citext); password 12–72 characters.
+- Email unique and case-insensitive: `normalizes :email, with: ->(e) { e.strip.downcase }` on `User` (as the Rails 8 authentication generator does), a plain `string` column and a unique index. Because every email is stored lowercased, the unique index blocks `Alice@Example.com` when `alice@example.com` exists, and `find_by(email:)` / `authenticate_by` normalise their input too. Password 12–72 characters.
 
 **Token: one JWT in an `HttpOnly` cookie, with a fixed 24-hour expiry**
 
@@ -448,7 +448,7 @@ The scaffold is already done: `api/` (Rails 8.1 API, RSpec, rack-attack, rack-co
 
 Everything else depends on knowing who the user is, so this comes first.
 
-- API: `users` migration (citext email). `POST /auth/signup`, `/auth/login`, `DELETE /auth/logout`, `GET /me`.
+- API: `users` migration (`email` string + unique index; `normalizes :email` on the model). `POST /auth/signup`, `/auth/login`, `DELETE /auth/logout`, `GET /me`.
 - Cookie support in API mode: `config.middleware.use ActionDispatch::Cookies` in `config/application.rb` and `include ActionController::Cookies` in `Api::V1::BaseController`.
 - HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`secure: Rails.env.production?`): fixed 24-hour `exp`, no renewal; secret from `ENV.fetch("JWT_SECRET") { Rails.application.secret_key_base }`; strict algorithm and expiry checks.
 - `Api::V1::BaseController` with `authenticate!` (reads and verifies the cookie), the `Origin` check on data-changing requests, and the `rescue_from` error layer inherited from the scaffold's `ApplicationController` (400 missing param, 422 invalid).
