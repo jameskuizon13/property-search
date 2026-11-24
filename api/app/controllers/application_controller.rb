@@ -30,9 +30,11 @@ class ApplicationController < ActionController::API
 
   private
 
+  # details keys are camelized like every other JSON key, so a field error
+  # lines up with the param or attribute the client sent (maxPrice, not max_price).
   def render_error(status, code, message, details = nil)
     body = { code:, message: }
-    body[:details] = details if details.present?
+    body[:details] = details.transform_keys { |key| key.to_s.camelize(:lower) } if details.present?
     render json: { error: body }, status:
   end
 

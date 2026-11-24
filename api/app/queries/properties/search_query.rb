@@ -8,7 +8,8 @@ module Properties
   #
   # Params use the API's camelCase names (minPrice, propertyTypes, ...).
   # Values arrive as strings and are checked strictly: `minBedrooms=banana`
-  # is a 422, not silently ignored. Error details use snake_case keys.
+  # is a 422, not silently ignored. Error details come back keyed by the
+  # same camelCase names (ApplicationController#render_error).
   class SearchQuery
     include ActiveModel::Validations
 
@@ -50,8 +51,9 @@ module Properties
 
       meta = { limit:, has_more: }
       meta[:next_cursor] = Cursor.encode(sort:, record: rows.last) if has_more
-      # Counted once, for the first batch only; later batches reuse it.
-      meta[:total_count] = filtered.count if cursor.nil?
+      # Counted once, for the first batch only; later batches reuse it. When
+      # the first batch already holds every row, its size is the count.
+      meta[:total_count] = has_more ? filtered.count : rows.size if cursor.nil?
 
       Result.new(records: rows, meta:)
     end
@@ -210,6 +212,8 @@ module Properties
       value = params[key]
       return if value.nil?
       return add_error(attribute, "must be a single value") unless value.is_a?(String)
+      # Postgres rejects NUL in text; without this it would be a 500.
+      return add_error(attribute, "contains a null byte") if value.include?("\u0000")
 
       value
     end
@@ -223,7 +227,7 @@ module Properties
     def validate_params
       @errors_from_parsing.each { |attribute, messages| messages.each { |m| errors.add(attribute, m) } }
       if min_price && max_price && min_price > max_price
-        errors.add(:max_price, "must be greater than or equal to min_price")
+        errors.add(:max_price, "must be greater than or equal to minPrice")
       end
       # A forged cursor, or one issued for a different sort.
       errors.add(:cursor, "is invalid") if cursor && decoded_cursor.nil?

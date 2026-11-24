@@ -186,11 +186,15 @@ RSpec.describe "GET /api/v1/properties", type: :request do
   end
 
   describe "keyset pagination" do
+    def microseconds(n) = Rational(n, 1_000_000) # exact, unlike float seconds
+
     # Ties on purpose: shared listed_at values, shared prices, and listed_at
-    # values only microseconds apart (the same millisecond in JSON).
+    # values only microseconds apart (the same millisecond in JSON). The
+    # later-microsecond rows are created first, so they get the lower ids.
     before do
-      base = Time.zone.parse("2026-11-20 10:00:00.123000")
-      times = [ base, base, base + 0.000001, base + 0.000002, base - 0.0005, base - 1, base - 1, base - 2 ]
+      base = Time.zone.parse("2026-11-20 10:00:00.123456")
+      times = [ base + microseconds(300), base + microseconds(1), base, base, base - microseconds(400),
+                base - 1, base - 1, base - 2 ]
       prices = [ 50, 50, 50, 60, 60, 70, nil, 80 ].map { |dollars_k| dollars_k && dollars_k * 1_000_000 }
       25.times do |i|
         price = prices[i % prices.size]
@@ -216,6 +220,20 @@ RSpec.describe "GET /api/v1/properties", type: :request do
         expect(seen.uniq.size).to eq(seen.size)
         expect(seen.size).to eq(sort == "newest" ? 25 : 22) # 3 withheld prices left out
       end
+    end
+
+    it "keeps microseconds in the cursor, so rows sharing a millisecond are never skipped" do
+      Property.delete_all
+      base = Time.zone.parse("2026-11-21 08:00:00.500000")
+      # Same millisecond, newest first by microsecond; the newest has the lowest id.
+      [ 900, 400, 100 ].each { |us| create(:property, listed_at: base + microseconds(us)) }
+
+      expect(walk(limit: "1").size).to eq(3)
+
+      # Mutation check: the same walk with a millisecond cursor (the bug the
+      # microsecond cursor exists to prevent) loses the other two rows.
+      allow(Properties::Cursor).to receive(:microseconds).and_wrap_original { |original, time| original.call(time) / 1_000 * 1_000 }
+      expect(walk(limit: "1").size).to eq(1)
     end
 
     it "keeps the walk stable when a newer listing arrives mid-walk" do
@@ -286,17 +304,18 @@ RSpec.describe "GET /api/v1/properties", type: :request do
       expect(json[:error][:details]).to have_key(field)
     end
 
-    it("rejects minPrice greater than maxPrice") { expect_422({ minPrice: "900000", maxPrice: "100000" }, :max_price) }
-    it("rejects a non-numeric minBedrooms") { expect_422({ minBedrooms: "banana" }, :min_bedrooms) }
-    it("rejects a negative price") { expect_422({ minPrice: "-1" }, :min_price) }
+    it("rejects minPrice greater than maxPrice") { expect_422({ minPrice: "900000", maxPrice: "100000" }, :maxPrice) }
+    it("rejects a non-numeric minBedrooms") { expect_422({ minBedrooms: "banana" }, :minBedrooms) }
+    it("rejects a negative price") { expect_422({ minPrice: "-1" }, :minPrice) }
     it("rejects a limit above the cap") { expect_422({ limit: "51" }, :limit) }
     it("rejects a limit of zero") { expect_422({ limit: "0" }, :limit) }
     it("rejects an unknown sort") { expect_422({ sort: "random" }, :sort) }
-    it("rejects an unknown property type") { expect_422({ propertyTypes: [ "castle" ] }, :property_types) }
-    it("rejects a non-boolean toggle") { expect_422({ excludeUnderOffer: "yes" }, :exclude_under_offer) }
+    it("rejects an unknown property type") { expect_422({ propertyTypes: [ "castle" ] }, :propertyTypes) }
+    it("rejects a non-boolean toggle") { expect_422({ excludeUnderOffer: "yes" }, :excludeUnderOffer) }
     it("rejects a q over 100 characters") { expect_422({ q: "a" * 101 }, :q) }
-    it("rejects an array where one value is expected") { expect_422({ minPrice: [ "1" ] }, :min_price) }
-    it("rejects a hash for property types") { expect_422({ propertyTypes: { a: "house" } }, :property_types) }
+    it("rejects an array where one value is expected") { expect_422({ minPrice: [ "1" ] }, :minPrice) }
+    it("rejects a NUL byte instead of failing with a 500") { expect_422({ q: "ab\u0000c" }, :q) }
+    it("rejects a hash for property types") { expect_422({ propertyTypes: { a: "house" } }, :propertyTypes) }
     it("rejects a garbage cursor") { expect_422({ cursor: "not-a-cursor" }, :cursor) }
 
     it "rejects a tampered cursor" do
@@ -317,7 +336,7 @@ RSpec.describe "GET /api/v1/properties", type: :request do
 
     it "reports every bad param at once" do
       search(minBedrooms: "x", sort: "y", limit: "999")
-      expect(json[:error][:details].keys).to contain_exactly(:min_bedrooms, :sort, :limit)
+      expect(json[:error][:details].keys).to contain_exactly(:minBedrooms, :sort, :limit)
     end
   end
 
