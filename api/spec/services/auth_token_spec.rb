@@ -38,6 +38,22 @@ RSpec.describe AuthToken do
     expect(described_class.decode(token)).to be_nil
   end
 
+  describe ".validate_secret!" do
+    it "refuses a JWT_SECRET shorter than 32 bytes" do
+      stub_const("ENV", ENV.to_h.merge("JWT_SECRET" => "changeme"))
+      expect { described_class.validate_secret! }.to raise_error(ArgumentError, /at least 32 bytes/)
+    end
+
+    it "accepts a long JWT_SECRET, and the derived default" do
+      stub_const("ENV", ENV.to_h.merge("JWT_SECRET" => "x" * 32))
+      expect { described_class.validate_secret! }.not_to raise_error
+
+      stub_const("ENV", ENV.to_h.except("JWT_SECRET"))
+      expect { described_class.validate_secret! }.not_to raise_error
+      expect(described_class.secret).not_to eq(Rails.application.secret_key_base)
+    end
+  end
+
   it "rejects a token signed with another secret" do
     token = JWT.encode({ sub: user.id.to_s, iat: Time.now.to_i, exp: 1.hour.from_now.to_i }, "x" * 64, "HS256")
     expect(described_class.decode(token)).to be_nil

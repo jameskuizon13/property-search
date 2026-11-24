@@ -187,6 +187,16 @@ RSpec.describe "Auth", type: :request do
   describe "DELETE /api/v1/auth/logout" do
     let(:user) { create(:user) }
 
+    it "still clears the cookie when disconnecting sockets fails (e.g. Redis down)" do
+      sign_in_as(user)
+      allow(ActionCable.server.remote_connections).to receive(:where).and_raise(Redis::CannotConnectError)
+
+      delete "/api/v1/auth/logout", headers: json_headers
+
+      expect(response).to have_http_status(:no_content)
+      expect(set_cookie_header).to match(/\Aauth=;/)
+    end
+
     it "clears the cookie, disconnects the user's sockets and returns 204" do
       sign_in_as(user)
       expect(ActionCable.server.remote_connections).to receive(:where).with(current_user: user).and_call_original

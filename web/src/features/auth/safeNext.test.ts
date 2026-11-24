@@ -21,6 +21,11 @@ describe('safeNext', () => {
     '/\u0000/evil.example',
     'javascript:alert(1)',
     ' /watchlist',
+    // dot segments that normalise to a protocol-relative `//evil.example`
+    '/.//evil.example',
+    '/..//evil.example',
+    '/%2e//evil.example',
+    '/a/..//evil.example',
   ])('falls back to /search for %j', (next) => {
     expect(safeNext(next)).toBe('/search')
   })

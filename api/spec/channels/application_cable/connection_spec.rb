@@ -36,5 +36,9 @@ RSpec.describe ApplicationCable::Connection, type: :channel do
     it "rejects a foreign origin (cross-site WebSocket hijacking)" do
       expect(origin_allowed?("https://evil.example")).to be(false)
     end
+
+    it "rejects a handshake with no Origin header" do
+      expect(origin_allowed?(nil)).to be(false)
+    end
   end
 end

@@ -65,7 +65,16 @@ Rails.application.configure do
   # Skip DNS rebinding protection for the default health check endpoint.
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
 
-  # No localhost fallback in production: FRONTEND_ORIGIN must be set.
-  config.x.frontend_origins = ENV.fetch("FRONTEND_ORIGIN", "").split(",").map(&:strip)
+  # No localhost fallback in production: FRONTEND_ORIGIN must be set. Unset,
+  # every write would be a silent 403 and CORS/cable would reject everything,
+  # so fail at boot instead. Each entry must be a bare origin
+  # (scheme://host[:port], no path or trailing slash), or it never matches.
+  config.x.frontend_origins = ENV.fetch("FRONTEND_ORIGIN", "").split(",").map(&:strip).compact_blank
+  raise "FRONTEND_ORIGIN must be set in production" if config.x.frontend_origins.empty?
+  config.x.frontend_origins.each do |origin|
+    next if (URI.parse(origin).origin rescue nil) == origin
+
+    raise "FRONTEND_ORIGIN entry #{origin.inspect} is not a bare origin like https://app.example.com"
+  end
   config.action_cable.allowed_request_origins = config.x.frontend_origins
 end

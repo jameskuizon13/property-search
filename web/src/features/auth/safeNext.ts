@@ -3,6 +3,8 @@
 // would otherwise resolve to another host.
 // oxlint-disable-next-line no-control-regex
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f\\]/
+// One leading slash, not followed by another slash or a backslash.
+const SAFE_OUTPUT = /^\/(?![/\\])/
 
 /**
  * Only same-app paths are allowed as a post-login target, so `?next=` can't
@@ -14,7 +16,10 @@ export function safeNext(next: string | undefined, fallback = '/search'): string
   try {
     const url = new URL(next, window.location.origin)
     if (url.origin !== window.location.origin) return fallback
-    return `${url.pathname}${url.search}${url.hash}`
+    const path = `${url.pathname}${url.search}${url.hash}`
+    // Check the output too: normalising dot segments can turn `/.//evil.example`
+    // into `//evil.example`, which a browser reads as another host.
+    return SAFE_OUTPUT.test(path) ? path : fallback
   } catch {
     return fallback
   }

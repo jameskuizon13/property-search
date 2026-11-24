@@ -154,7 +154,7 @@ flowchart LR
 
 The browser calls Rails over REST and gets watchlist updates back over one WebSocket. Postgres is the source of truth. Redis backs the cache, cable pub/sub and rate limits.
 
-In development, Vite proxies `/api` and `/cable` to Rails, so the browser sees one origin. Production assumes the web app and API sit on **same-site subdomains** (see Security hardening). CORS and cable origins still come from `FRONTEND_ORIGIN`, so moving from the proxy to subdomains needs no code change. Fully separate domains are a Batch 10 fallback.
+In development, Vite proxies `/api` and `/cable` to Rails, so the browser sees one origin. Production assumes the web app and API sit on **same-site subdomains** (see Security hardening). CORS and cable origins still come from `FRONTEND_ORIGIN`. The web app calls same-origin `/api/v1` and `/cable` paths, so moving to subdomains needs a reverse proxy in front of `app.` or a configurable API base URL. Fully separate domains are a Batch 10 fallback.
 
 ```
 property-search/

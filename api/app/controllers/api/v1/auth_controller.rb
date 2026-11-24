@@ -37,7 +37,14 @@ module Api
         sign_out
         # Closes this user's sockets on every device; other devices still hold
         # a valid cookie and simply reconnect (see README trade-offs).
-        ActionCable.server.remote_connections.where(current_user: user).disconnect if user
+        # Best effort: it publishes through Redis, and if that fails the
+        # cleared cookie must still reach the browser. An exception here would
+        # skip writing it (the cookie middleware sits inside the error page),
+        # leaving a shared computer signed in. Rails.error.handle reports and
+        # swallows the error.
+        Rails.error.handle(context: { action: "logout_disconnect" }) do
+          ActionCable.server.remote_connections.where(current_user: user).disconnect
+        end if user
         head :no_content
       end
     end

@@ -50,7 +50,20 @@ module AuthToken
     }
   end
 
+  MIN_SECRET_BYTES = 32
+
+  # JWT_SECRET when set (at least 32 bytes, checked at boot by
+  # config/initializers/auth_token.rb). Otherwise a key derived from
+  # secret_key_base for this one purpose, rather than reusing it directly.
   def secret
-    ENV.fetch("JWT_SECRET") { Rails.application.secret_key_base }
+    ENV.fetch("JWT_SECRET") { Rails.application.key_generator.generate_key("auth/jwt", 64) }
+  end
+
+  # A short HS256 key can be brute-forced offline from any user's own cookie,
+  # after which every account's token can be forged. Fail fast instead.
+  def validate_secret!
+    return if secret.bytesize >= MIN_SECRET_BYTES
+
+    raise ArgumentError, "JWT_SECRET must be at least #{MIN_SECRET_BYTES} bytes (e.g. `bin/rails secret`)"
   end
 end
