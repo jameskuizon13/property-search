@@ -13,6 +13,12 @@ RSpec.describe PropertyEvent, type: :model do
     expect(event.errors[:kind]).to be_present
   end
 
+  it "accepts every kind the model allows in the database" do
+    property = create(:property)
+    rows = PropertyEvent::KINDS.map { |kind| { property_id: property.id, kind:, created_at: Time.current } }
+    expect { described_class.insert_all!(rows) }.to change(described_class, :count).by(rows.size)
+  end
+
   it "has a CHECK constraint on kind" do
     event = create(:property_event)
     expect { event.update_columns(kind: "renamed") }.to raise_error(ActiveRecord::StatementInvalid, /check/i)

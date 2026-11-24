@@ -53,6 +53,12 @@ RSpec.describe Property, type: :model do
     expect(build(:property, car_spaces: 40_000)).not_to be_valid
   end
 
+  it "caps price and land size, so an oversized value is a validation error, not a 500" do
+    expect(build(:property, price_cents: described_class::MAX_PRICE_CENTS)).to be_valid
+    expect(build(:property, price_cents: described_class::MAX_PRICE_CENTS + 1)).not_to be_valid
+    expect(build(:property, land_size_sqm: 3_000_000_000)).not_to be_valid
+  end
+
   it "rejects out-of-range coordinates" do
     expect(build(:property, latitude: -91)).not_to be_valid
     expect(build(:property, longitude: 181)).not_to be_valid
@@ -75,6 +81,15 @@ RSpec.describe Property, type: :model do
       end
     end
 
+    it "accepts every value the model allows (CHECKs and enums agree)" do
+      base = attributes_for(:property).merge(listed_at: Time.current)
+      rows = Property::PROPERTY_TYPES.keys.map { |type| base.merge(property_type: type) } +
+             Property::STATUSES.map { |status| base.merge(status:) } +
+             Property::STATES.map { |state| base.merge(state:) }
+
+      expect { described_class.insert_all!(rows) }.to change(described_class, :count).by(rows.size)
+    end
+
     it "requires the NOT NULL columns" do
       expect { property.update_columns(price_display: nil) }.to raise_error(ActiveRecord::NotNullViolation)
     end
@@ -90,12 +105,31 @@ RSpec.describe Property, type: :model do
       expect(described_class.active).to contain_exactly(for_sale, under_offer)
     end
 
-    it "produces the same predicate as the partial indexes, so Postgres can use them" do
+    it "produces the same predicate as the partial indexes" do
       expect(described_class.active.to_sql).to include(%("properties"."status" IN ('for_sale', 'under_offer')))
 
       predicates = ActiveRecord::Base.connection.indexes(:properties).filter_map(&:where)
       expect(predicates.size).to eq(3)
       expect(predicates).to all(include("'for_sale'").and(include("'under_offer'")))
+    end
+
+    it "lets Postgres use the partial indexes, which it can't without the scope" do
+      create_list(:property, 3)
+      connection = ActiveRecord::Base.connection
+      # A test table is tiny and has no statistics, so only check that index
+      # paths are possible (which partial index wins at scale is in the
+      # README's EXPLAIN section). SET LOCAL ends with the example's transaction.
+      connection.execute("SET LOCAL enable_seqscan = off")
+      plan = ->(relation) { connection.select_rows("EXPLAIN #{relation.to_sql}").flatten.join("\n") }
+      partial_index = /index_properties_active_on_\w+/
+      newest = ->(scope) { scope.order(listed_at: :desc, id: :desc).limit(21) }
+
+      expect(plan.call(newest.call(described_class.active))).to match(partial_index)
+      expect(plan.call(described_class.active.where.not(price_cents: nil).order(:price_cents, :id).limit(21)))
+        .to match(partial_index)
+      expect(plan.call(described_class.active.where(property_type: "villa", bedrooms: 4..))).to match(partial_index)
+      # Without Property.active the predicate isn't implied, so no partial index.
+      expect(plan.call(newest.call(described_class.all))).not_to match(partial_index)
     end
   end
 

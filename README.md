@@ -237,7 +237,8 @@ param and always creates a normal user.
 
 `make seed` (`db:seed:replant`) wipes every table and reseeds; plain `bin/rails db:seed` only adds
 what is missing. Seeding is skipped in production unless `SEED_DEMO_DATA=1`, because the demo
-accounts have a known password and `bin/docker-entrypoint` seeds a fresh database.
+accounts have a known password and `bin/docker-entrypoint` seeds a fresh database. Forcing it
+there also requires `SEED_DEMO_PASSWORD`, so the published password is never used in production.
 
 - **10,000 properties by default** (`SEED_COUNT=100000 make seed` for the `EXPLAIN` plans), written
   with `insert_all` in batches, about 2 s for 10k. `insert_all` skips callbacks on purpose, so
@@ -248,9 +249,10 @@ accounts have a known password and `bin/docker-entrypoint` seeds a fresh databas
   no land size, acreage is 8,000 m² and up).
 - **Something for every filter:** about 10% withheld prices ("Contact agent", "Auction"), 15%
   under offer, and some sold and withdrawn listings that search must never return.
-- **Edge cases on purpose:** prices are rounded to $5,000 and some rows share a `listed_at`,
-  so the keyset cursor (Batch 3) has ties to get right.
-- **Deterministic:** a fixed random seed, so the same `SEED_COUNT` always gives the same rows.
+- **Edge cases on purpose:** prices are rounded to $5,000 and some rows share a `listed_at`
+  exactly, while others share its millisecond but not its microseconds (equal in JSON, different
+  in Postgres), so the keyset cursor has ties to get right.
+- **Deterministic:** a fixed random seed, so the same `SEED_COUNT` gives the same rows, with listing dates relative to when you seeded. Ids come from the table's sequence, so they change on each reseed.
 - Built with Ruby's `Random` rather than Faker, since Faker is a development/test gem and street
   names from its default locale don't look Australian. `image_url` is left empty; the UI shows a
   placeholder.

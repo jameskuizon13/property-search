@@ -22,6 +22,13 @@ RSpec.describe User, type: :model do
     expect(user.errors[:role]).to be_present
   end
 
+  it "accepts every role the model allows in the database" do
+    rows = User::ROLES.map.with_index do |role, i|
+      { email: "role#{i}@example.com", name: "R", password_digest: "x", role:, created_at: Time.current, updated_at: Time.current }
+    end
+    expect { User.insert_all!(rows) }.to change(User, :count).by(rows.size)
+  end
+
   it "has a CHECK constraint on role" do
     user = create(:user)
     expect { user.update_columns(role: "superuser") }.to raise_error(ActiveRecord::StatementInvalid, /check/i)

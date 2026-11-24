@@ -14,7 +14,14 @@ end
 
 require_relative "seeds/property_generator"
 
-DEMO_PASSWORD = "property-demo-2026".freeze
+# Published in the README for local use. Forcing the seed in production
+# requires choosing a password instead.
+DEMO_PASSWORD =
+  if Rails.env.production?
+    ENV.fetch("SEED_DEMO_PASSWORD") { abort "Set SEED_DEMO_PASSWORD to seed demo accounts in production." }
+  else
+    "property-demo-2026"
+  end
 
 [
   { email: "demo@example.com", name: "Demo User", role: "user" },
@@ -23,7 +30,8 @@ DEMO_PASSWORD = "property-demo-2026".freeze
   user = User.find_or_initialize_by(email: attrs[:email])
   user.update!(name: attrs[:name], role: attrs[:role], password: DEMO_PASSWORD)
 end
-puts "Demo accounts: demo@example.com (user), admin@example.com (admin); password #{DEMO_PASSWORD}"
+puts "Demo accounts: demo@example.com (user), admin@example.com (admin)"
+puts "Password: #{DEMO_PASSWORD}" unless Rails.env.production?
 
 if Property.exists?
   puts "Properties already seeded (#{Property.count}). Run `make seed` to wipe and reseed."

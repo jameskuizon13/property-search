@@ -2,8 +2,9 @@
 # insert_all, so 10k rows take a few seconds. insert_all skips callbacks on
 # purpose: seeding must not write property_events or broadcast anything.
 #
-# Deterministic: the same count and random seed always give the same rows,
-# so bug reports and README examples ("property 42") stay reproducible.
+# Deterministic: the same count, random seed and `now` give the same rows.
+# The seed passes the current time, so listing dates are relative to when it
+# ran, and ids come from the table's sequence, so they change on reseed.
 class PropertyGenerator
   SUBURBS_CSV = File.expand_path("suburbs.csv", __dir__)
   BATCH_SIZE = 2_000
@@ -127,14 +128,24 @@ class PropertyGenerator
     %w[apartment_unit retirement_living].include?(type) ? "#{rng.rand(1..40)}/#{street}" : street
   end
 
-  # Spread over the last 120 days with microsecond precision, so rows that
-  # share a millisecond exist. Every 50th row reuses the previous timestamp,
-  # so exact ties on listed_at exist too.
+  # Spread over the last 120 days at microsecond precision (Postgres's).
+  # Edge cases for the keyset cursor on purpose: every 50th row reuses the
+  # previous timestamp exactly, and every 50th row offset by 25 lands in the
+  # previous row's millisecond with different microseconds, so values that
+  # look equal in JSON (milliseconds) but differ in the database exist.
   def listed_at(index)
     @last_listed_at = nil if index.zero?
-    return @last_listed_at if @last_listed_at && (index % 50).zero?
+    if @last_listed_at
+      return @last_listed_at if (index % 50).zero?
+      return same_millisecond(@last_listed_at) if (index % 50) == 25
+    end
 
-    @last_listed_at = @now - rng.rand(0.0..(120 * 86_400.0))
+    @last_listed_at = (@now - rng.rand(0.0..(120 * 86_400.0))).round(6)
+  end
+
+  def same_millisecond(time)
+    microseconds = (time.usec % 1_000 + rng.rand(1..999)) % 1_000 # never the same value
+    time.floor(3) + Rational(microseconds, 1_000_000)
   end
 
 

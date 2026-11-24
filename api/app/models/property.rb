@@ -21,6 +21,11 @@ class Property < ApplicationRecord
   }.freeze
 
   SMALLINT_MAX = 32_767
+  INTEGER_MAX = 2_147_483_647
+  # $1 billion: far above any listing, and keeps search's price * 100 math
+  # well inside bigint. Without caps an oversized value passes validation
+  # and then fails the save with a RangeError (a 500, not a 422).
+  MAX_PRICE_CENTS = 100_000_000_000
 
   # String-backed enums (not integers), so SQL and index predicates stay
   # readable. validate: true turns an unknown value into a 422, not a 500.
@@ -28,6 +33,8 @@ class Property < ApplicationRecord
   enum :property_type, PROPERTY_TYPES.keys.index_by(&:itself), validate: true
 
   # The FKs cascade in the database, so no dependent: callbacks are needed.
+  # Deleting a property also deletes its change history (FK cascade). Admins
+  # are steered to the softer option, status `withdrawn`, which keeps it.
   has_many :property_events
   has_many :watchlist_items
 
@@ -41,11 +48,11 @@ class Property < ApplicationRecord
   validates :suburb, presence: true, length: { maximum: 100 }
   validates :state, inclusion: { in: STATES }
   validates :postcode, format: { with: /\A\d{4}\z/, message: "must be 4 digits" }
-  validates :price_cents, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
+  validates :price_cents, numericality: { only_integer: true, in: 0..MAX_PRICE_CENTS }, allow_nil: true
   validates :price_display, presence: true, length: { maximum: 100 }
   validates :bedrooms, :bathrooms, :car_spaces,
             numericality: { only_integer: true, greater_than_or_equal_to: 0, less_than_or_equal_to: SMALLINT_MAX }
-  validates :land_size_sqm, numericality: { only_integer: true, greater_than_or_equal_to: 0 }, allow_nil: true
+  validates :land_size_sqm, numericality: { only_integer: true, in: 0..INTEGER_MAX }, allow_nil: true
   validates :latitude, numericality: { in: -90..90 }, allow_nil: true
   validates :longitude, numericality: { in: -180..180 }, allow_nil: true
   validates :listed_at, presence: true

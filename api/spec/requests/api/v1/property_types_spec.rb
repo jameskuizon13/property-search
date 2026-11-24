@@ -18,7 +18,7 @@ RSpec.describe "GET /api/v1/property_types", type: :request do
     ])
   end
 
-  it "matches the values the database allows" do
+  it "lists exactly the model's enum values (the CHECK is covered in the model spec)" do
     get "/api/v1/property_types", headers: json_headers
     expect(json[:data].pluck(:value)).to eq(Property.property_types.values)
   end

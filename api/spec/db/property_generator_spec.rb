@@ -21,6 +21,10 @@ RSpec.describe PropertyGenerator do
     expect(Property.where(status: %w[sold withdrawn]).count).to be_positive
     expect(Property.group(:listed_at).having("count(*) > 1").count).not_to be_empty
     expect(Property.where.not(price_cents: nil).group(:price_cents).having("count(*) > 1").count).not_to be_empty
+    # Rows that look equal in JSON (same millisecond) but differ in microseconds.
+    same_millisecond = Property.group("date_trunc('milliseconds', listed_at)")
+                               .having("count(DISTINCT listed_at) > 1").count
+    expect(same_millisecond).not_to be_empty
   end
 
   it "is deterministic for the same random seed" do
