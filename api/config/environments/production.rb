@@ -65,5 +65,7 @@ Rails.application.configure do
   # Skip DNS rebinding protection for the default health check endpoint.
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
 
-  config.action_cable.allowed_request_origins = ENV.fetch("FRONTEND_ORIGIN", "").split(",")
+  # No localhost fallback in production: FRONTEND_ORIGIN must be set.
+  config.x.frontend_origins = ENV.fetch("FRONTEND_ORIGIN", "").split(",").map(&:strip)
+  config.action_cable.allowed_request_origins = config.x.frontend_origins
 end

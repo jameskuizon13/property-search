@@ -1,12 +1,9 @@
-import { getDefaultStore } from 'jotai'
-import { tokenAtom } from '@/features/auth/authAtoms'
-
 export class ApiError extends Error {
   status: number
   code: string
-  details?: unknown
+  details?: Record<string, string[]>
 
-  constructor(status: number, code: string, message: string, details?: unknown) {
+  constructor(status: number, code: string, message: string, details?: Record<string, string[]>) {
     super(message)
     this.status = status
     this.code = code
@@ -14,16 +11,38 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = Omit<RequestInit, 'body'> & { body?: unknown }
+type RequestOptions = Omit<RequestInit, 'body'> & {
+  body?: unknown
+  /**
+   * Return the 401 to the caller instead of running the global "signed out"
+   * handler. Used by GET /me (a 401 just means "nobody is signed in") and by
+   * login (a 401 means "wrong password", shown inline).
+   */
+  allowUnauthorized?: boolean
+}
 
-export async function apiFetch<T>(path: string, { body, headers, ...init }: RequestOptions = {}): Promise<T> {
-  const token = getDefaultStore().get(tokenAtom)
+let unauthorizedHandler: (() => void) | null = null
+
+/** Registers what happens when any request comes back 401 (clear caches, go to /login). */
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler
+}
+
+/**
+ * The one fetch client. Auth is an HttpOnly cookie set by the API, so the app
+ * never sees or stores a token: `credentials: 'include'` makes the browser
+ * attach it.
+ */
+export async function apiFetch<T>(
+  path: string,
+  { body, headers, allowUnauthorized = false, ...init }: RequestOptions = {},
+): Promise<T> {
   const res = await fetch(`/api/v1${path}`, {
     ...init,
+    credentials: 'include',
     headers: {
       Accept: 'application/json',
       ...(body !== undefined && { 'Content-Type': 'application/json' }),
-      ...(token && { Authorization: `Bearer ${token}` }),
       ...headers,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -33,6 +52,7 @@ export async function apiFetch<T>(path: string, { body, headers, ...init }: Requ
 
   const json = await res.json().catch(() => null)
   if (!res.ok) {
+    if (res.status === 401 && !allowUnauthorized) unauthorizedHandler?.()
     const err = json?.error ?? {}
     throw new ApiError(res.status, err.code ?? 'unknown_error', err.message ?? res.statusText, err.details)
   }

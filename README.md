@@ -34,6 +34,7 @@ Either way, open **http://localhost:5173** (the web app). **http://localhost:300
 | 3000 | API (Rails) | Only `/up` for a health check |
 | 5432 | Postgres | No |
 | 6379 | Redis | No |
+| 5050 | pgAdmin (optional, `make pgadmin`) | Yes, to browse the database |
 
 ### Option A: Run it (everything in Docker)
 
@@ -123,7 +124,7 @@ make setup   # starts db + redis in Docker, bundle install, db:prepare + seed, p
 ```bash
 make dev        # starts db + redis if needed, then Rails on :3000 and Vite on :5173
                 # Ctrl-C stops Rails and Vite; db + redis keep running
-make down       # stop and remove the db + redis containers (data is kept)
+make down       # stop and remove the db + redis (and pgAdmin) containers (data is kept)
 ```
 
 `make api` and `make web` run just one side, in separate terminals.
@@ -169,13 +170,37 @@ cd web && pnpm test -t "part of the test name"                  # by name
 - **Reset the database:** `make seed` wipes and reseeds the tables. `docker compose down -v`
   deletes the Postgres volume entirely; the next `make setup` recreates it.
 
+### Browsing the database (pgAdmin, optional)
+
+```bash
+make pgadmin    # starts db if needed, then pgAdmin on http://localhost:5050
+```
+
+1. Open http://localhost:5050 and log in with **`dev@example.com` / `pgadmin`**.
+2. In the left tree, open **Servers → property-search (Docker)**. It's pre-registered from
+   `docker/pgadmin/servers.json`.
+3. Enter the Postgres password **`postgres`** when asked. Tick "Save password" to skip it next time.
+4. The app's tables are under **Databases → property_search_development → Schemas → public → Tables**
+   (`property_search_test` is the RSpec database and is emptied by every test run).
+
+Notes:
+
+- pgAdmin is in the Compose `tools` profile, so `make up` and `make dev` never start it.
+  `make down` stops it along with everything else.
+- These are dev-only defaults. The port is published on `127.0.0.1` only, so nothing else on the
+  network can reach it. Override the login with `PGADMIN_EMAIL` / `PGADMIN_PASSWORD` in your shell.
+- Inside Docker the database host is `db`, not `localhost`. Use `db:5432` if you add a server by hand.
+- `servers.json` is only imported the first time pgAdmin starts. If you change it, run
+  `docker compose --profile tools down` and `docker volume rm property-search_pgadmin_data`, then
+  `make pgadmin` again. That also forgets saved passwords and pgAdmin settings.
+
 ### Environment variables
 
 Nothing needs copying: every value has a default in code that matches the Docker setup.
 
 | File | Variables | Loaded? |
 | ---- | --------- | ------- |
-| `api/.env.example` | `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `FRONTEND_ORIGIN`, `JWT_SECRET` (commented out; falls back to `secret_key_base`) | **No.** There is no dotenv gem, so a copied `api/.env` is ignored. It documents the defaults in `config/database.yml`, `config/cable.yml` and `config/environments/development.rb`; to change one, export it in your shell. |
+| `api/.env.example` | `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `FRONTEND_ORIGIN`, `JWT_SECRET` (commented out; falls back to `secret_key_base`), `TRUSTED_PROXIES` (commented out; load balancers whose `X-Forwarded-For` is believed for rate limiting, empty = trust nobody) | **No.** There is no dotenv gem, so a copied `api/.env` is ignored. It documents the defaults in `config/database.yml`, `config/cable.yml` and `config/environments/development.rb`; to change one, export it in your shell. |
 | `web/.env.example` | `API_PROXY_TARGET` (where Vite proxies `/api` and `/cable`; default `http://localhost:3000`) | **Yes**, if copied to `web/.env`: `vite.config.ts` uses `loadEnv`. Docker Compose sets it to `http://api:3000`. |
 
 ### Where things live
@@ -184,8 +209,10 @@ Nothing needs copying: every value has a default in code that matches the Docker
 | ---- | ---- |
 | `api/app/models` | ActiveRecord models _(Batch 1–2)_ |
 | `api/app/controllers` | API controllers under `/api/v1` _(Batch 1 onwards)_ |
-| `api/app/channels` | ActionCable `WatchlistChannel` _(Batch 6; folder not created yet)_ |
-| `api/spec` | RSpec: `requests/`, `support/` |
+| `api/app/channels` | ActionCable connection auth _(Batch 1)_; `WatchlistChannel` _(Batch 6)_ |
+| `api/app/services` | `AuthToken` (JWT issue/verify, cookie options) |
+| `api/app/resources` | Alba serializers |
+| `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `support/` |
 | `web/src/features` | Feature code: `auth/`, `properties/`, `watchlist/` |
 | `web/src/routes` | TanStack Router routes |
 | `web/src/lib` | API client, cable consumer, Query client |
@@ -234,6 +261,30 @@ list with its new badge until the next refetch, rather than vanishing under the 
 - Assumes web and API are on the same site (e.g. `app.` and `api.` subdomains); in dev the Vite proxy gives one origin.
 - CSRF (another site making the browser send a request with your cookie): `SameSite=Lax` (the browser won't attach the cookie to cross-site `POST`s) plus an `Origin` check against `FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`.
 - Logout disconnects all of that user's live sockets on every device; other devices simply reconnect with their still-valid cookie.
+- Where it lives: `AuthToken` (`api/app/services/auth_token.rb`) issues and verifies the token; `Api::V1::BaseController` reads the cookie (`authenticate!`) and runs the `Origin` check; `ApplicationCable::Connection` reuses `AuthToken`. On the web, `apiFetch` sends `credentials: 'include'` and never sees the token; `requireAuth` guards routes in `beforeLoad`; a 401 anywhere else clears cached data and goes to `/login?next=…` (only same-app paths are accepted as `next`).
+
+**Threat model (Batch 1)**
+
+| Asset | Threat | Control | Spec |
+| ----- | ------ | ------- | ---- |
+| Auth token | Stolen by injected script (XSS) | `HttpOnly` cookie; nothing in `localStorage` or JS memory | `auth_spec.rb` (cookie flags) |
+| Auth token | Forged, edited or downgraded | HS256 only, `alg: none` and other algorithms rejected, `sub`/`iat`/`exp` required | `auth_token_spec.rb`, `me_spec.rb` |
+| Session | Used forever after theft | Fixed 24 h `exp`; logout clears the cookie | `auth_token_spec.rb`, `auth_spec.rb` |
+| User actions | CSRF from another site | `SameSite=Lax` + `Origin` must equal `FRONTEND_ORIGIN` on writes (403) | `auth_spec.rb` (Origin check) |
+| Live updates | Cross-site WebSocket hijacking | Cable `allowed_request_origins` from `FRONTEND_ORIGIN`; connection needs a valid cookie | `connection_spec.rb` |
+| Accounts | Password guessing, user enumeration on login | rack-attack 10/min per IP on `/auth/*`, keyed on the real peer (a spoofed `X-Forwarded-For` is ignored unless it comes from `TRUSTED_PROXIES`; ports in forwarded entries are stripped so one client keeps one bucket); `authenticate_by` (constant time) and one generic error | `rate_limit_spec.rb`, `client_ip_spec.rb`, `auth_spec.rb` |
+| Passwords | Leaked from the DB or logs | bcrypt; `password_digest` never serialised; `password`, `email`, `token`, `cursor` filtered from logs | `auth_spec.rb` (response keys), `filter_parameters_spec.rb` |
+| Errors | Stack traces or SQL in responses | One JSON error envelope everywhere: `rescue_from` in controllers, `JsonExceptionsApp` for unknown routes and 500s; non-string params, NUL bytes and malformed JSON are 400s, not crashes; Rails' `ip_spoofing_check` is off because it raised an empty 500 above the error handler (rate limits don't use `remote_ip`) | `errors_spec.rb`, `auth_spec.rb` |
+| Redirects | Open redirect via `?next=` | Only same-origin paths accepted; control characters and backslashes rejected (URL parsers strip or rewrite them) | `safeNext.test.ts`, `auth.test.tsx` |
+
+Known, accepted gaps (Batch 1):
+
+- **Signup reveals whether an email is registered** ("has already been taken"). Hiding it needs an email-verification flow, which this app doesn't have; the `auth/ip` throttle limits how fast anyone can probe.
+- **Rate limits use fixed one-minute windows**, so up to ~20 attempts can land across a window boundary. `Retry-After` reports the time left in the current window.
+- **Rate limiting in Docker Compose** sees the Vite container as the peer, so all browsers share one bucket there. In production, set `TRUSTED_PROXIES` to the load balancer's range.
+- **Tokens have zero clock leeway** (`iat` in the future is rejected). Fine for one API instance; several instances need synced clocks (NTP).
+- **Malformed JSON bodies are logged raw in development** (Rails' debug-level parse-error log, password included). Production logs at `info` and doesn't write them.
+- **Logout is idempotent:** it always clears the cookie (even an expired or tampered one) and returns 204.
 
 ### Real-time ([PRD](PRD.md#real-time-design-actioncable))
 
@@ -286,7 +337,7 @@ inside 4 hours. Batch 7 only uses leftover buffer. Batches 9–10 are nice-to-ha
 
 | Batch | Name | Estimate | Actual | Done |
 | ----- | ---- | -------- | ------ | ---- |
-| 1  | Auth & minimum security | ~50 min | | [ ] |
+| 1  | Auth & minimum security | ~50 min | | [x] |
 | 2  | Property data & seeds | ~25 min | | [ ] |
 | 3  | Search API | ~40 min | | [ ] |
 | 4  | Watchlist API | ~15 min | | [ ] |

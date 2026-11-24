@@ -6,7 +6,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { queryClient } from './lib/queryClient'
-import { router } from './router'
+import { createAppRouter } from './router'
+
+const router = createAppRouter(queryClient)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
