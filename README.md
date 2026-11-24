@@ -5,7 +5,7 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: only the scaffold exists so far.** The work is split into numbered **batches** (build
+**Status: Batches 1–2 are built** (auth and minimum security; property data and seeds). The work is split into numbered **batches** (build
 steps, listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
 A label like _(Batch 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
@@ -207,8 +207,9 @@ Nothing needs copying: every value has a default in code that matches the Docker
 
 | Path | What |
 | ---- | ---- |
-| `api/app/models` | ActiveRecord models _(Batch 1–2)_ |
-| `api/app/controllers` | API controllers under `/api/v1` _(Batch 1 onwards)_ |
+| `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent` |
+| `api/app/controllers` | API controllers under `/api/v1` |
+| `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
 | `api/app/channels` | ActionCable connection auth _(Batch 1)_; `WatchlistChannel` _(Batch 6)_ |
 | `api/app/services` | `AuthToken` (JWT issue/verify, cookie options) |
 | `api/app/resources` | Alba serializers |
@@ -218,16 +219,39 @@ Nothing needs copying: every value has a default in code that matches the Docker
 | `web/src/lib` | API client, cable consumer, Query client |
 | `web/src/components` | Shared UI (`ui/`) |
 
-### Demo logins _(Batch 2)_
+### Demo logins
 
-The seed will create two accounts:
+The seed creates two accounts, both with the password `property-demo-2026`:
 
 | Email               | Role  |
 | ------------------- | ----- |
 | `demo@example.com`  | user  |
 | `admin@example.com` | admin (admin screens are Batch 9) |
 
-Password: see `api/db/seeds.rb`. `make seed` re-runs the seed from scratch.
+`GET /api/v1/me` returns the `role`, so the UI can tell them apart. Sign-up ignores any `role`
+param and always creates a normal user.
+
+### Seed data
+
+`make seed` (`db:seed:replant`) wipes every table and reseeds; plain `bin/rails db:seed` only adds
+what is missing. Seeding is skipped in production unless `SEED_DEMO_DATA=1`, because the demo
+accounts have a known password and `bin/docker-entrypoint` seeds a fresh database.
+
+- **10,000 properties by default** (`SEED_COUNT=100000 make seed` for the `EXPLAIN` plans), written
+  with `insert_all` in batches, about 2 s for 10k. `insert_all` skips callbacks on purpose, so
+  seeding never writes `property_events` or broadcasts.
+- **Real places:** 120 suburb/postcode pairs across all 8 states and territories in
+  `api/db/seeds/suburbs.csv` (NT postcodes keep their leading zero, e.g. `0800`). Street names,
+  prices and room counts are generated per property type (land has no bedrooms, apartments have
+  no land size, acreage is 8,000 m² and up).
+- **Something for every filter:** about 10% withheld prices ("Contact agent", "Auction"), 15%
+  under offer, and some sold and withdrawn listings that search must never return.
+- **Edge cases on purpose:** prices are rounded to $5,000 and some rows share a `listed_at`,
+  so the keyset cursor (Batch 3) has ties to get right.
+- **Deterministic:** a fixed random seed, so the same `SEED_COUNT` always gives the same rows.
+- Built with Ruby's `Random` rather than Faker, since Faker is a development/test gem and street
+  names from its default locale don't look Australian. `image_url` is left empty; the UI shows a
+  placeholder.
 
 ## Trying the live updates _(available from Batch 6)_
 
@@ -338,7 +362,7 @@ inside 4 hours. Batch 7 only uses leftover buffer. Batches 9–10 are nice-to-ha
 | Batch | Name | Estimate | Actual | Done |
 | ----- | ---- | -------- | ------ | ---- |
 | 1  | Auth & minimum security | ~50 min | | [x] |
-| 2  | Property data & seeds | ~25 min | | [ ] |
+| 2  | Property data & seeds | ~25 min | | [x] |
 | 3  | Search API | ~40 min | | [ ] |
 | 4  | Watchlist API | ~15 min | | [ ] |
 | 5  | Search & watchlist UI | ~50 min | | [ ] |

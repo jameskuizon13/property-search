@@ -7,6 +7,26 @@ RSpec.describe User, type: :model do
   it { is_expected.to validate_presence_of(:name) }
   it { is_expected.to have_secure_password }
 
+  it "defaults to the user role" do
+    expect(described_class.new.role).to eq("user")
+    expect(create(:user)).to be_user
+  end
+
+  it "has string-backed user and admin roles" do
+    expect(described_class.roles).to eq("user" => "user", "admin" => "admin")
+  end
+
+  it "reports an unknown role as a validation error" do
+    user = build(:user, role: "superuser")
+    expect(user).not_to be_valid
+    expect(user.errors[:role]).to be_present
+  end
+
+  it "has a CHECK constraint on role" do
+    user = create(:user)
+    expect { user.update_columns(role: "superuser") }.to raise_error(ActiveRecord::StatementInvalid, /check/i)
+  end
+
   it "stores email trimmed and lowercased" do
     user = create(:user, email: "  Alice@Example.COM ")
     expect(user.reload.email).to eq("alice@example.com")

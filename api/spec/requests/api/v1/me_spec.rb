@@ -8,7 +8,13 @@ RSpec.describe "GET /api/v1/me", type: :request do
     get "/api/v1/me", headers: json_headers
 
     expect(response).to have_http_status(:ok)
-    expect(json).to eq(data: { id: user.id, email: user.email, name: user.name })
+    expect(json).to eq(data: { id: user.id, email: user.email, name: user.name, role: "user" })
+  end
+
+  it "includes the admin role so the UI can show the admin link" do
+    sign_in_as(create(:user, role: "admin"))
+    get "/api/v1/me", headers: json_headers
+    expect(json[:data][:role]).to eq("admin")
   end
 
   it "returns 401 without a cookie" do

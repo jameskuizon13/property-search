@@ -8,6 +8,7 @@ Rails.application.routes.draw do
       post "auth/login", to: "auth#login"
       delete "auth/logout", to: "auth#logout"
       get "me", to: "me#show"
+      get "property_types", to: "property_types#index"
     end
   end
 end

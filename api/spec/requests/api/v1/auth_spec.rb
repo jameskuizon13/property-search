@@ -13,11 +13,20 @@ RSpec.describe "Auth", type: :request do
 
       expect(response).to have_http_status(:created)
       expect(json[:data]).to include(email: "new@example.com", name: "New User")
-      expect(json[:data].keys).to contain_exactly(:id, :email, :name)
+      expect(json[:data].keys).to contain_exactly(:id, :email, :name, :role)
+      expect(json[:data][:role]).to eq("user")
       expect(set_cookie_header).to match(/\Aauth=[^;]+/)
       expect(set_cookie_header).to match(/;\s*httponly/i)
       expect(set_cookie_header).to match(/;\s*samesite=lax/i)
       expect(set_cookie_header).to match(/;\s*path=\//i)
+    end
+
+    it "ignores a role param: sign-up always creates a normal user" do
+      post "/api/v1/auth/signup", params: params.merge(role: "admin").to_json, headers: json_headers
+
+      expect(response).to have_http_status(:created)
+      expect(User.find_by!(email: "new@example.com")).to be_user
+      expect(json[:data][:role]).to eq("user")
     end
 
     it "returns 422 with field errors for an invalid user" do

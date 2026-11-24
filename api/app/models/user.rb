@@ -1,7 +1,12 @@
 class User < ApplicationRecord
   PASSWORD_LENGTH = 12..72 # 72 is bcrypt's byte limit
+  ROLES = %w[user admin].freeze
 
   has_secure_password
+
+  # String-backed, with a CHECK in the database. Never accepted as a param:
+  # sign-up always creates a normal user; only the seed makes an admin.
+  enum :role, ROLES.index_by(&:itself), default: "user", validate: true
 
   normalizes :email, with: ->(email) { email.strip.downcase }
   normalizes :name, with: ->(name) { name.strip }
