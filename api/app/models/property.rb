@@ -27,8 +27,9 @@ class Property < ApplicationRecord
   enum :status, STATUSES.index_by(&:itself), default: "for_sale", validate: true
   enum :property_type, PROPERTY_TYPES.keys.index_by(&:itself), validate: true
 
-  # The FK cascades in the database, so no dependent: callback is needed.
+  # The FKs cascade in the database, so no dependent: callbacks are needed.
   has_many :property_events
+  has_many :watchlist_items
 
   scope :active, -> { where(status: ACTIVE_STATUSES) }
 

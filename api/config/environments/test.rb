@@ -41,4 +41,10 @@ Rails.application.configure do
   config.action_controller.raise_on_missing_callback_actions = true
 
   config.action_cable.allowed_request_origins = config.x.frontend_origins
+
+  # Any request spec that triggers an N+1 query or an unused eager load fails.
+  config.after_initialize do
+    Bullet.enable = true
+    Bullet.raise = true
+  end
 end

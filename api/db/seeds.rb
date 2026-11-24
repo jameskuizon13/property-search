@@ -31,6 +31,14 @@ else
   count = Integer(ENV.fetch("SEED_COUNT", "10000"))
   started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   inserted = PropertyGenerator.new(count:).call
+  # Extended statistics (see the AddPropertyTypeBedroomsStatistics migration;
+  # schema.rb can't record them), then fresh planner statistics, so EXPLAIN
+  # reflects the new rows right away instead of waiting for autovacuum.
+  connection = ActiveRecord::Base.connection
+  connection.execute(<<~SQL)
+    CREATE STATISTICS IF NOT EXISTS properties_type_bedrooms_stats (mcv) ON property_type, bedrooms FROM properties
+  SQL
+  connection.execute("ANALYZE properties")
   elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
   puts format("Seeded %<inserted>d properties in %<elapsed>.1fs.", inserted:, elapsed:)
 end

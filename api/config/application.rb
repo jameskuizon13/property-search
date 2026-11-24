@@ -49,6 +49,9 @@ module PropertySearch
     # Web origins allowed by CORS, ActionCable and the Origin (CSRF) check.
     config.x.frontend_origins = ENV.fetch("FRONTEND_ORIGIN") { "http://localhost:5173" }.split(",").map(&:strip)
 
+    # Paging defaults and caps (config/pagination.yml).
+    config.x.pagination = config_for(:pagination)
+
     # Load balancers whose X-Forwarded-For can be believed when keying rate
     # limits (see lib/client_ip.rb). Empty by default: trust nobody.
     require_relative "../lib/client_ip"

@@ -5,7 +5,7 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Batches 1–2 are built** (auth and minimum security; property data and seeds). The work is split into numbered **batches** (build
+**Status: Batches 1–3 are built** (auth and minimum security; property data and seeds; the search API). The work is split into numbered **batches** (build
 steps, listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
 A label like _(Batch 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
@@ -207,11 +207,13 @@ Nothing needs copying: every value has a default in code that matches the Docker
 
 | Path | What |
 | ---- | ---- |
-| `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent` |
+| `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent`, `WatchlistItem` (table only; endpoints are Batch 4) |
 | `api/app/controllers` | API controllers under `/api/v1` |
 | `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
 | `api/app/channels` | ActionCable connection auth _(Batch 1)_; `WatchlistChannel` _(Batch 6)_ |
 | `api/app/services` | `AuthToken` (JWT issue/verify, cookie options) |
+| `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor` |
+| `api/config/pagination.yml` | Default and maximum `limit` (`PAGINATION_DEFAULT_LIMIT`, `PAGINATION_MAX_LIMIT`) |
 | `api/app/resources` | Alba serializers |
 | `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `support/` |
 | `web/src/features` | Feature code: `auth/`, `properties/`, `watchlist/` |
@@ -322,7 +324,10 @@ Known, accepted gaps (Batch 1):
 
 - Keyset pagination (each page starts after the last row seen, instead of `OFFSET`, so deep pages stay fast) with an opaque, signed cursor (`[sort value, id]`); fetches `limit + 1` to decide `hasMore`. The cursor stores `listed_at` as integer microseconds (Postgres precision), since JSON times only carry milliseconds.
 - Search always returns active listings (`for_sale` + `under_offer`, via `Property.active`); there is no `status` param, and sold/withdrawn never appear. An "Exclude under offer" toggle narrows to `for_sale`. The watchlist is not limited to active, so a watched property that sells stays there with its new badge.
-- `q` is trimmed and ignored when shorter than 2 characters. A missing required param returns 400; invalid values (bad cursor, `limit` out of range, min > max) return 422.
+- `GET /api/v1/properties` params: `q`, `minPrice`, `maxPrice` (whole AUD, inclusive), `minBedrooms`, `propertyTypes[]` (or comma-separated), `excludeUnderOffer`, `excludePriceWithheld` (`true`/`false`/`1`/`0`), `sort` (`newest` | `price_asc` | `price_desc`), `cursor`, `limit` (default 20, max 50). Response: `{ data: [...], meta: { limit, hasMore, nextCursor?, totalCount? } }`; `totalCount` only on the first batch.
+- `q` is trimmed and ignored when shorter than 2 characters; `%` and `_` are matched literally. Every value is type-checked: a bad value (`minBedrooms=banana`, an array where one value is expected, an unknown type or sort, `limit` out of range, min > max, a forged cursor, or a cursor from another sort) returns 422 with every bad field listed at once (snake_case keys, e.g. `max_price`). There are no required params, so search never returns 400.
+- The cursor is signed (HMAC-SHA256, JSON payload, URL-safe) and records the sort it was issued for. Its values are type-checked as integers before they reach SQL.
+- `watched` comes from one `LEFT JOIN watchlist_items … AND user_id = ?`, selected as a boolean, so the page is one query; `totalCount` is a separate `COUNT` on the filtered scope, without the join. A spec checks the query count doesn't grow with the number of rows.
 - Price sorts leave out listings with a withheld price ("Contact agent"), and the UI says so.
 - Honest limits: no jumping to page N, and in a price sort a listing whose price changes mid-scroll can appear twice (de-duplicated by `id` on the client) or be missed.
 
@@ -330,16 +335,61 @@ Known, accepted gaps (Batch 1):
 
 - Partial btree indexes (an index over only the rows matching a `WHERE`, so it stays small) `WHERE status IN ('for_sale', 'under_offer')`, matching the `Property.active` scope exactly: `(listed_at DESC, id DESC)` for newest, `(price_cents, id)` (also `price_cents IS NOT NULL`) for both price sorts, `(property_type, bedrooms)` for narrow filters.
 - Free-text `q`: GIN `gin_trgm_ops` on `suburb` and `street_address` (`ILIKE '%q%'`), plus a `text_pattern_ops` btree on `postcode` for prefix matching (`LIKE 'q%'`, so `30` finds `3065`).
-- Any index `EXPLAIN` shows is unused gets dropped.
+- **Extended statistics** on `(property_type, bedrooms)` (`CREATE STATISTICS … (mcv)`). See the villas case below for why. `schema.rb` can't record them, so the seed also creates them (`IF NOT EXISTS`) for databases loaded from `schema.rb`.
+- Every index appears in at least one plan below, so none was dropped.
 
-#### EXPLAIN evidence _(Batch 3)_
+#### EXPLAIN evidence
 
-Captured from `Properties::SearchQuery.new(params).relation.explain(:analyze)` (not hand-written SQL) with `SEED_COUNT=100000`, since at 10k rows Postgres often prefers a sequential scan.
+The plans below come from the exact SQL Rails sends (`Properties::SearchQuery.new(params).relation.to_sql`, run through `EXPLAIN (ANALYZE)`), not hand-written SQL. They were captured with `SEED_COUNT=100000`, because at 10k rows Postgres often prefers a sequential scan. To reproduce them:
 
-- **Newest:** _TODO: paste plan_
-- **Price low→high / high→low:** _TODO: paste plan_
-- **Narrow filter (e.g. villas, 4+ beds):** _TODO: paste plan_
-- **Free-text `q`:** _TODO: paste plan_
+```bash
+cd api && SEED_COUNT=100000 bin/rails db:seed:replant && bin/rails search:explain
+```
+
+| Search | Plan | Time |
+| ------ | ---- | ---- |
+| Newest, signed in | Index Scan on `(listed_at, id)` partial, stops after 21 rows; `watched` is a Nested Loop Left Join probing the unique `(user_id, property_id)` index once per row | 0.05 ms |
+| Newest, later batch | Same index, `Index Cond: ROW(listed_at, id) < ROW(…)`, so a deep page costs the same as the first | 0.04 ms |
+| Price low→high | Index Scan on `(price_cents, id)` partial | 0.03 ms |
+| Price high→low | Index Scan **Backward** on the same index | 0.03 ms |
+| Villas, 4+ beds (no matches) | Bitmap Index Scan on `(property_type, bedrooms)`, then sort | 0.03 ms (was 33 ms, see below) |
+| Acreage, 5+ beds | Feed index with a filter: matches are common enough that the first 21 come quickly | 0.7 ms |
+| `q=jetty` (rare) | BitmapOr of the two trigram GIN indexes and the postcode `text_pattern_ops` index | 0.06 ms |
+| `q=fitz` (common) | Feed index with a filter: matches are common, so it stops after 21 | 2.7 ms |
+| `q=30` (postcode prefix) | Feed index with a filter | 0.2 ms |
+
+**Why the extended statistics:** Postgres assumes columns are independent. For "villas, 4+ beds" it multiplied the two selectivities and expected about 1,200 matches, when the seed has none. So it walked the newest-first index hoping to fill a page early, and read every active row:
+
+```
+Index Scan using index_properties_active_on_listed_at_id on properties (actual time=34.074..34.074 rows=0)
+  Filter: ((bedrooms >= 4) AND ((property_type)::text = 'villa'::text))
+  Rows Removed by Filter: 91914
+Execution Time: 34.098 ms
+```
+
+MCV statistics over the pair tell it the combination is rare, so it switches to the narrow index:
+
+```
+Limit (actual time=0.007..0.007 rows=0)
+  ->  Sort  (Sort Key: listed_at DESC, id DESC)
+        ->  Bitmap Heap Scan on properties (rows=1) (actual rows=0)
+              ->  Bitmap Index Scan on index_properties_active_on_property_type_bedrooms (actual rows=0)
+                    Index Cond: (((property_type)::text = 'villa'::text) AND (bedrooms >= 4))
+Execution Time: 0.030 ms
+```
+
+The rare free-text plan, showing all three text indexes:
+
+```
+Bitmap Heap Scan on properties (actual time=0.015..0.015 rows=0)
+  ->  BitmapOr
+        ->  Bitmap Index Scan on index_properties_on_suburb_trgm          Index Cond: (suburb ~~* '%jetty%')
+        ->  Bitmap Index Scan on index_properties_on_street_address_trgm  Index Cond: (street_address ~~* '%jetty%')
+        ->  Bitmap Index Scan on index_properties_on_postcode_pattern     Index Cond: (postcode ~>=~ 'jetty' AND postcode ~<~ 'jettz')
+Execution Time: 0.055 ms
+```
+
+Trade-off: a very common `q` that is also rare among the newest listings could still scan a lot of the feed index before it fills a page. At this size it never exceeded 3 ms.
 
 ### State management ([PRD](PRD.md#frontend-architecture))
 
@@ -350,7 +400,7 @@ Captured from `Properties::SearchQuery.new(params).relation.explain(:analyze)` (
 
 ### N+1, rate limiting & caching ([PRD](PRD.md#non-functional-requirements))
 
-- _(Batch 3)_ `bullet` will raise in the test suite (`Bullet.raise = true`), so any request spec with an N+1 fails. Today it is only in the development group and logs warnings.
+- `bullet` is in the development and test groups: it logs in development and raises in the test suite (`Bullet.raise = true`), so any request spec with an N+1 fails. `spec/config/bullet_spec.rb` proves it still raises.
 - rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store. _(Batch 1)_
 - Per-route rack-attack throttles for search and watchlist writes, and Redis-cached search counts, are later batches (Batch 7).
 
@@ -363,7 +413,7 @@ inside 4 hours. Batch 7 only uses leftover buffer. Batches 9–10 are nice-to-ha
 | ----- | ---- | -------- | ------ | ---- |
 | 1  | Auth & minimum security | ~50 min | | [x] |
 | 2  | Property data & seeds | ~25 min | | [x] |
-| 3  | Search API | ~40 min | | [ ] |
+| 3  | Search API | ~40 min | | [x] |
 | 4  | Watchlist API | ~15 min | | [ ] |
 | 5  | Search & watchlist UI | ~50 min | | [ ] |
 | 6  | Real-time | ~25 min | | [ ] |

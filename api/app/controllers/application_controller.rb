@@ -11,6 +11,11 @@ class ApplicationController < ActionController::API
     render_error :unprocessable_content, "validation_failed", "Validation failed", e.record.errors.to_hash
   end
 
+  # Query objects (e.g. Properties::SearchQuery) that fail validate!.
+  rescue_from ActiveModel::ValidationError do |e|
+    render_error :unprocessable_content, "validation_failed", "Validation failed", e.model.errors.to_hash
+  end
+
   rescue_from ActionController::ParameterMissing do |e|
     render_error :bad_request, "parameter_missing", e.message
   end

@@ -44,12 +44,12 @@ group :development, :test do
   gem "rspec-rails"
   gem "factory_bot_rails"
   gem "faker"
-end
 
-group :development do
-  # Flags N+1 queries and unused eager loading
+  # Flags N+1 queries and unused eager loading: logs in development, raises
+  # in the test suite, so any request spec with an N+1 fails.
   gem "bullet"
 end
+
 
 group :test do
   gem "shoulda-matchers"

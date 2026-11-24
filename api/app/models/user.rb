@@ -4,6 +4,9 @@ class User < ApplicationRecord
 
   has_secure_password
 
+  # The FK cascades in the database, so no dependent: callback is needed.
+  has_many :watchlist_items
+
   # String-backed, with a CHECK in the database. Never accepted as a param:
   # sign-up always creates a normal user; only the seed makes an admin.
   enum :role, ROLES.index_by(&:itself), default: "user", validate: true

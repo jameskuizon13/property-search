@@ -9,6 +9,7 @@ Rails.application.routes.draw do
       delete "auth/logout", to: "auth#logout"
       get "me", to: "me#show"
       get "property_types", to: "property_types#index"
+      resources :properties, only: :index
     end
   end
 end

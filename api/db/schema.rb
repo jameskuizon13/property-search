@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_25_000003) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_25_000005) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
@@ -73,5 +73,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_000003) do
     t.check_constraint "role::text = ANY (ARRAY['user'::character varying, 'admin'::character varying]::text[])", name: "users_role_check"
   end
 
+  create_table "watchlist_items", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "property_id", null: false
+    t.datetime "created_at", null: false
+    t.index ["property_id"], name: "index_watchlist_items_on_property_id"
+    t.index ["user_id", "property_id"], name: "index_watchlist_items_on_user_id_and_property_id", unique: true
+  end
+
   add_foreign_key "property_events", "properties", on_delete: :cascade
+  add_foreign_key "watchlist_items", "properties", on_delete: :cascade
+  add_foreign_key "watchlist_items", "users", on_delete: :cascade
 end
