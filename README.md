@@ -5,9 +5,11 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Milestones 1–7 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API; the search and watchlist UI; live watchlist updates; rate limits and caching). The work is split into numbered **milestones**
-(build steps that each end with something that runs, passing specs and an updated README; listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
-A label like _(Milestone 8)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
+**Status:** built: auth and minimum security, property data and seeds, the search and watchlist
+APIs, the search and watchlist UI, live watchlist updates, and rate limits and caching. Admin screens
+for properties and further security hardening are planned but not built (see
+[What I'd do next](#what-id-do-next)). The full plan, including the build order and estimates, is
+in [PRD.md](PRD.md#delivery-plan-risks--open-questions).
 
 > The brief asked for Jest. Tests use **Vitest** (same API as Jest) with React Testing Library
 > instead, because Vitest reuses the Vite config, so there is no separate Babel/SWC transform to maintain.
@@ -234,22 +236,8 @@ Nothing needs copying: every value has a default in code that matches the Docker
 
 ### Where things live
 
-| Path | What |
-| ---- | ---- |
-| `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent`, `WatchlistItem` |
-| `api/app/controllers` | API controllers under `/api/v1` |
-| `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
-| `api/app/channels` | ActionCable connection auth; `WatchlistChannel` (one stream per signed-in user) |
-| `api/app/services` | `AuthToken` (JWT issue/verify, cookie options); `PropertyChangeNotifier` (live-update fan-out); `SearchCache` (the version that cached search counts hang off) |
-| `api/lib/tasks` | `demo:*` tasks for live updates; `search:explain` |
-| `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor`; `Watchlist::ListQuery` and `Watchlist::Cursor` (the user's watchlist, newest added first) |
-| `api/config/pagination.yml` | Default and maximum `limit` (`PAGINATION_DEFAULT_LIMIT`, `PAGINATION_MAX_LIMIT`) |
-| `api/app/resources` | Alba serializers |
-| `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `tasks/`, `support/` |
-| `web/src/features` | Feature code: `auth/`, `properties/`, `watchlist/` |
-| `web/src/routes` | TanStack Router routes |
-| `web/src/lib` | API client, cable consumer, Query client, query-key factory |
-| `web/src/components` | Shared UI (`ui/`) |
+See [Folder structure](#folder-structure): what each folder holds, how they connect, and why
+there are more than Rails' defaults.
 
 ### Demo logins
 
@@ -258,7 +246,7 @@ The seed creates two accounts, both with the password `property-demo-2026`:
 | Email               | Role  |
 | ------------------- | ----- |
 | `demo@example.com`  | user  |
-| `admin@example.com` | admin (admin screens are Milestone 8) |
+| `admin@example.com` | admin (admin screens are planned, not built yet) |
 
 `GET /api/v1/me` returns the `role`, so the UI can tell them apart. Sign-up ignores any `role`
 param and always creates a normal user.
@@ -286,6 +274,113 @@ there also requires `SEED_DEMO_PASSWORD`, so the published password is never use
 - Built with Ruby's `Random` rather than Faker, since Faker is a development/test gem and street
   names from its default locale don't look Australian. `image_url` is left empty; the UI shows a
   placeholder.
+
+## Folder structure
+
+Two apps side by side. `web/` calls `api/` over HTTP (`/api/v1/...`) and a WebSocket (`/cable`);
+in development Vite proxies both, so the browser only ever talks to one origin.
+
+```
+property-search/
+├── api/                 Rails JSON API + ActionCable
+├── web/                 React single-page app (Vite)
+├── docker/              pgAdmin's server list
+├── docker-compose.yml   db, redis, api, web
+├── Makefile             shortcuts for both apps
+├── .github/workflows/   CI: one job per app
+└── .husky/, lint-staged.config.mjs   pre-commit hooks
+```
+
+### Why `api/app/` has more than `models/` and `controllers/`
+
+Rails only fixes a handful of names under `app/`: `models/`, `controllers/`, `channels/`, `jobs/`,
+`mailers/` and `views/` (this app is API-only, so there are no views or mailers). Everything else is
+a team choice, and adding one costs nothing: Zeitwerk, Rails' autoloader, treats **every** folder
+directly under `app/` as a root. So `app/queries/properties/search_query.rb` is just
+`Properties::SearchQuery`, with no `require` and no config; the folder name never appears in the
+class name.
+
+The extra folders exist to keep the two defaults thin. A model answers "what is valid data?", a
+controller answers "which request, which status code?", and anything that is neither gets its own
+home instead of growing a 500-line model or controller. `services/`, `queries/` and `resources/`
+are common community conventions (`resources/` is the name the Alba gem uses for serializers), not
+Rails features.
+
+How a search request passes through them:
+
+```
+GET /api/v1/properties?minPrice=500000
+  → controllers/api/v1/properties_controller.rb   picks the allowed params, nothing else
+  → queries/properties/search_query.rb             validates filters (422 if bad), builds the SQL,
+                                                   keyset-pages with properties/cursor.rb
+  → models/property.rb                             table, enums, scopes, validations
+  → resources/property_resource.rb                 Property → camelCase JSON
+  → controllers/api/v1/base_controller.rb          render_page: { data, meta }
+```
+
+And a live price change:
+
+```
+property.update!(price_cents: ...)        (a rake demo task, the console, later the admin UI)
+  → models/property.rb                    after_update_commit, only if price or status changed
+  → services/property_change_notifier.rb  finds the users watching it
+  → channels/watchlist_channel.rb         broadcasts to each watcher's own stream
+  → web/src/features/watchlist/useWatchlistChannel.ts   patches the cached property in place
+```
+
+| Folder | From | Holds | Belongs here when… |
+| ------ | ---- | ----- | ------------------ |
+| `app/models` | Rails | `User`, `Property`, `PropertyEvent`, `WatchlistItem`: associations, enums, validations, scopes, callbacks | it describes one table's data and rules |
+| `app/controllers` | Rails | `api/v1/*` controllers; `BaseController` holds `current_user`, `authenticate!`, the sign-in cookie, the origin check and `render_page`; `ApplicationController` turns exceptions into JSON errors | it maps an HTTP request to a status code. Each action calls one query or model method and renders |
+| `app/resources` | Alba | `PropertyResource`, `UserResource` | it decides what JSON the client sees. One `PropertyResource` serves search, the watchlist and live updates, so all three send the same shape |
+| `app/queries` | ours | `Properties::SearchQuery` + `Cursor`, `Watchlist::ListQuery` + `Cursor` | it is read-only: params in, records and paging `meta` out. Specced directly, without HTTP |
+| `app/services` | ours | `AuthToken` (JWT issue/verify, cookie options), `PropertyChangeNotifier` (live-update fan-out), `SearchCache` (the version cached counts hang off) | it is an action that is neither HTTP nor one model's job |
+| `app/channels` | Rails | `ApplicationCable::Connection` (signs the socket in from the auth cookie), `WatchlistChannel` | it is the WebSocket version of a controller |
+| `app/jobs` | Rails | Only the generated base class. The notifier runs inline (see [Real-time](#real-time-prd)) | — |
+| `lib/` | Rails | `client_ip.rb` and `json_exceptions_app.rb` (Rack-level code); `tasks/` (`demo:*`, `search:explain`) | it runs outside a request, or must load at boot. The two Rack files are `require`d by `config/application.rb` for middleware, before `app/` is loaded, so they are kept out of autoloading |
+| `config/` | Rails | `routes.rb`; `initializers/` (CORS, rack-attack, Alba, JWT secret check); `pagination.yml` (default and max `limit`) | it is set once at boot |
+| `db/` | Rails | `migrate/`, `schema.rb`, `seeds.rb`; `seeds/` holds `PropertyGenerator` and `suburbs.csv` (real suburb/postcode pairs), too big for `seeds.rb` | — |
+| `spec/` | RSpec | Mirrors `app/`: `requests/` (a controller end to end, through routing and middleware), `models/`, `queries/`, `services/`, `channels/`, `tasks/`; `factories/`; `support/` (shared helpers) | — |
+
+### The order the folders appeared
+
+None of the custom folders were planned up front. Each appeared when the first code that didn't
+fit the existing ones was written, in the order the features were built:
+
+1. **Scaffold:** `rails new` gave `models/`, `controllers/` and `jobs/`. The web app started with
+   `router.tsx`, `lib/` (the fetch wrapper, cable consumer and `QueryClient`), `features/auth/` and `test/`.
+2. **Auth:** `controllers/api/v1/` (versioned, so a v2 could live beside it later);
+   `resources/` for the first JSON response (`UserResource`); `services/` for `AuthToken`, because
+   signing a JWT is neither a model nor HTTP; `lib/` for the client-IP and JSON-error Rack code;
+   `channels/application_cable/`, whose connection signs the socket in with the same cookie. Web got
+   `routes/` for the layout and login pages.
+3. **Property data:** `db/seeds/`, once the generator and the suburb CSV outgrew `seeds.rb`.
+4. **Search API:** `queries/`. Filter validation, sorting and keyset cursors were too much for a
+   controller action and are read-only, so they are not a service either.
+5. **Watchlist API:** no new folders; `Watchlist::ListQuery` followed the search pattern.
+6. **Search and watchlist UI:** `web/src/components/ui/`, once both pages needed the property card,
+   the endless list and the loading skeletons.
+7. **Live updates:** `WatchlistChannel`, `PropertyChangeNotifier` and `lib/tasks/demo.rake` went into
+   folders that already existed.
+8. **Rate limits and caching:** `SearchCache`, again in `services/`.
+
+### `web/src/`
+
+React has even fewer conventions than Rails, so this layout is also a choice:
+
+| Folder | Holds |
+| ------ | ----- |
+| `main.tsx`, `router.tsx` | Entry point; `router.tsx` is the single route table (the counterpart of `config/routes.rb`), with auth guards and URL validation |
+| `routes/` | `RootLayout` and the small login/signup pages, which only arrange feature components |
+| `features/<name>/` | Everything for one area: `api.ts` (fetch calls), TanStack Query hooks, components, zod schemas, types. `auth/`, `properties/` and `watchlist/` line up with the API's auth/me, properties and watchlist controllers |
+| `lib/` | Plumbing that knows no feature: the fetch wrapper, the cable consumer, the `QueryClient`, every query key in one place (so hooks, cache patches and tests can't drift apart), shared API types |
+| `components/ui/` | Pieces used by more than one feature: `PropertyCard`, `InfiniteResults`, `Skeleton`, `Toaster` |
+| `test/` | MSW server and handlers, render helpers, browser fakes. Tests themselves sit next to the code as `*.test.ts(x)` |
+
+The folders are grouped by **feature** rather than by kind (`components/`, `hooks/`, `services/`),
+so a watchlist change stays inside one folder. `lib/` never imports from `features/`. Features do
+import each other where the areas overlap: the watchlist reuses the property types, formatting and
+cache helpers, and the search results show the watchlist's `WatchButton`.
 
 ## Trying the live updates
 
@@ -323,17 +418,17 @@ list with its new badge until the next refetch, rather than vanishing under the 
 
 ### Auth ([PRD](PRD.md#security-hardening))
 
-- One HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production). Fixed 24 h `exp`: after that you sign in again. No renewal in Milestone 1; sliding renewal with a 14-day cap is [Milestone 9](PRD.md#milestone-9--nice-to-have-hardening).
+- One HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production). Fixed 24 h `exp`: after that you sign in again. No renewal yet; sliding renewal with a 14-day cap is [planned](PRD.md#milestone-9--nice-to-have-hardening).
 - Signing secret: `JWT_SECRET` if set, otherwise a key derived from `secret_key_base` for this one purpose (`key_generator.generate_key("auth/jwt")`), so the JWT key is never the same as Rails' own secret. The app refuses to boot with a `JWT_SECRET` under 32 bytes: a short HS256 key could be brute-forced offline from any user's own cookie. `master.key` is gitignored, so a fresh clone works without it; production sets `JWT_SECRET` (or `SECRET_KEY_BASE`).
 - Production refuses to boot without `FRONTEND_ORIGIN`, or with an entry that isn't a bare origin (e.g. a trailing slash), instead of answering every write with a silent 403.
 - Why a JWT rather than Rails' encrypted session cookie: both are stateless; the JWT gives explicit `exp` and claims, verified by one code path for REST and ActionCable, and it is the option the brief names. `HttpOnly` keeps it away from JavaScript either way.
-- Trade-off: nothing is stored server-side, so a token copied before logout stays valid for up to 24 h. Instant revocation (a `sessions` table) is in [Milestone 9](PRD.md#milestone-9--nice-to-have-hardening).
+- Trade-off: nothing is stored server-side, so a token copied before logout stays valid for up to 24 h. Instant revocation (a `sessions` table) is [planned](PRD.md#milestone-9--nice-to-have-hardening).
 - Assumes web and API are on the same site (e.g. `app.` and `api.` subdomains); in dev the Vite proxy gives one origin.
 - CSRF (another site making the browser send a request with your cookie): `SameSite=Lax` (the browser won't attach the cookie to cross-site `POST`s) plus an `Origin` check against `FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`.
 - Logout disconnects all of that user's live sockets on every device; other devices simply reconnect with their still-valid cookie.
 - Where it lives: `AuthToken` (`api/app/services/auth_token.rb`) issues and verifies the token; `Api::V1::BaseController` reads the cookie (`authenticate!`) and runs the `Origin` check; `ApplicationCable::Connection` reuses `AuthToken`. On the web, `apiFetch` sends `credentials: 'include'` and never sees the token; `requireAuth` guards routes in `beforeLoad`; a 401 anywhere else clears the user's cached data, shows "You've been signed out" and re-runs the route guards, so only a protected page goes to `/login?next=…` and search stays put (only same-app paths are accepted as `next`). Logging out in one tab signs out the app's other tabs through a `BroadcastChannel('auth')` (see [Search & watchlist UI](#search--watchlist-ui-prd)).
 
-**Threat model (Milestone 1)**
+**Threat model**
 
 | Asset | Threat | Control | Spec |
 | ----- | ------ | ------- | ---- |
@@ -348,7 +443,7 @@ list with its new badge until the next refetch, rather than vanishing under the 
 | Watchlists | Reading or changing another user's watchlist (IDOR) | Every query goes through `current_user.watchlist_items`; endpoints are keyed on the property, never a watchlist-item id; a `user_id` param is ignored; ids must be plain integers (`12abc` and `12.0` are 404s, not property 12) | `watchlist_spec.rb` |
 | Redirects | Open redirect via `?next=` | Only same-origin paths accepted; control characters and backslashes rejected (URL parsers strip or rewrite them); the normalised result is checked again, since dot segments like `/.//evil.example` normalise to `//evil.example` | `safeNext.test.ts`, `auth.test.tsx` |
 
-Known, accepted gaps (Milestone 1):
+Known, accepted gaps:
 
 - **Signup reveals whether an email is registered** ("has already been taken"). Hiding it needs an email-verification flow, which this app doesn't have; the `auth/ip` throttle limits how fast anyone can probe.
 - **Rate limits use fixed one-minute windows**, so up to ~20 attempts can land across a window boundary. `Retry-After` reports the time left in the current window.
@@ -356,7 +451,7 @@ Known, accepted gaps (Milestone 1):
 - **Tokens have zero clock leeway** (`iat` in the future is rejected). Fine for one API instance; several instances need synced clocks (NTP).
 - **Malformed JSON bodies are logged raw in development** (Rails' debug-level parse-error log, password included). Production logs at `info` and doesn't write them.
 - **Logout is idempotent:** it always clears the cookie (even an expired or tampered one) and returns 204. Disconnecting sockets is best effort: if Redis is down, the error is reported and the cookie is still cleared.
-- **An open WebSocket outlives its token.** The cookie is checked when the socket connects, so a socket opened just before `exp` keeps receiving that user's updates until it drops, the user logs out, or the server restarts. Re-checking `exp` on the connection is a Milestone 9 item.
+- **An open WebSocket outlives its token.** The cookie is checked when the socket connects, so a socket opened just before `exp` keeps receiving that user's updates until it drops, the user logs out, or the server restarts. Re-checking `exp` on the connection is planned hardening.
 - **Subdomain deployment needs a proxy or a base URL.** The web app calls same-origin `/api/v1` and `/cable` paths, so `app.` + `api.` subdomains need either a reverse proxy in front of `app.` or a configurable API base URL. CORS and cable origins are already driven by `FRONTEND_ORIGIN`.
 
 ### Real-time ([PRD](PRD.md#real-time-design-actioncable))
@@ -481,7 +576,7 @@ Every piece of state has exactly one owner, picked by where it has to survive:
 ### N+1, rate limiting & caching ([PRD](PRD.md#non-functional-requirements))
 
 - `bullet` is in the development and test groups: it logs in development and raises in the test suite (`Bullet.raise = true`), so any request spec with an N+1 fails. `spec/config/bullet_spec.rb` proves it still raises.
-- rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store. _(Milestone 1)_
+- rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store.
 - **Per-route throttles** (`api/config/initializers/rack_attack.rb`), all returning the same 429 body with `Retry-After`:
 
   | Rule | Limit | Keyed by |
@@ -498,25 +593,6 @@ Every piece of state has exactly one owner, picked by where it has to survive:
 - **No list virtualisation.** Each result card has `content-visibility: auto`, so the browser skips layout and paint for cards far off screen, while every card stays in the DOM, in find-in-page and in the screen-reader list. Its placeholder height is a formula that matches the real card (a 3:2 photo as wide as the grid cell plus a 190 px text block, measured from the list's own width with container units; within a few pixels of the real card at phone, tablet and desktop widths), so Back lands on the same card. Only the height is set: a placeholder width would widen the single phone column. TanStack Virtual would have needed row chunking for the responsive grid, fought router scroll restoration, and hidden off-screen cards from find-in-page and assistive tech; it would pay off at thousands of cards, not hundreds.
 - Known gaps: if Redis loses a search cache version bump, cached counts can be stale for up to 60 s (a failed bump is reported); writes that skip callbacks (`update_all`, `insert_all`, `delete`) don't bump it, and nothing in the app uses them on properties outside the seed; in Docker Compose every browser shares one IP bucket for `search/ip` too.
 
-## Build progress
-
-The core path (Milestones 1–6) is about 3 h 40 min, including the README update each milestone
-ends with, leaving a **20-minute buffer** inside 4 hours. A short final README pass comes out of
-that buffer. Milestone 7 only uses leftover buffer.
-Milestones 8–9 are nice-to-haves.
-
-| Milestone | Name | Estimate | Done |
-| --------- | ---- | -------- | ---- |
-| 1  | Auth & minimum security | ~50 min | [x] |
-| 2  | Property data & seeds | ~25 min | [x] |
-| 3  | Search API | ~40 min | [x] |
-| 4  | Watchlist API | ~15 min | [x] |
-| 5  | Search & watchlist UI | ~50 min | [x] |
-| 6  | Real-time | ~25 min | [x] |
-| 7  | Performance & bonus | leftover buffer | [x] |
-| 8  | Admin UI for properties (nice to have) | ~55 min | [ ] |
-| 9  | Security hardening & extras (nice to have) | documented only | [ ] |
-
 ## Notes from a JS/TS developer learning Rails
 
 _To be written as I go._
@@ -526,6 +602,7 @@ _To be written as I go._
 
 ## What I'd do next
 
+- Admin screens to list, create, edit and delete properties, with changes reaching watchers live.
 - Sliding token renewal (fresh 24 h `exp` once the token is over 1 h old) with a hard cap of 14 days from login.
 - Server-side sessions for instant revocation, plus "log out everywhere" and a device list.
 - Short-lived access token with a rotating refresh token and reuse detection.
