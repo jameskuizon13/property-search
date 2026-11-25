@@ -450,6 +450,20 @@ Tests cover the critical paths listed in the brief rather than chasing a coverag
 
 The build is split into milestones. Each milestone ends with something that runs, passing specs and a README updated for what it added, so the work can stop after any milestone and still be a coherent submission. Its edge cases are either handled and tested, or listed under known gaps in the README. Before it is committed, a QA pass tries to break it and then a CTO review reads the code, and their real findings are fixed. There is no README milestone at the end, only a short final pass: the README grows one milestone at a time (see "README, kept current in every milestone" below). Estimates assume Rails is new to me, so the Rails-heavy milestones (1, 3, 6) carry the most slack. The core path, Milestones 1–6, adds up to about 3 h 25 min (50 + 25 + 40 + 15 + 50 + 25), plus about 15 min of README updates spread across them, so about 3 h 40 min, leaving a **20-minute buffer** inside 4 hours. The final README pass (5–10 min) comes out of that buffer. Milestone 7 is built only from whatever buffer is left. Milestone 8 (admin UI) is a nice-to-have built only if time is left. Milestone 9 (security hardening and other extras) is written up in the README as "what I'd do next".
 
+**Progress:**
+
+| Milestone | Name | Estimate | Done |
+| --------- | ---- | -------- | ---- |
+| 1  | Auth & minimum security | ~50 min | [x] |
+| 2  | Property data & seeds | ~25 min | [x] |
+| 3  | Search API | ~40 min | [x] |
+| 4  | Watchlist API | ~15 min | [x] |
+| 5  | Search & watchlist UI | ~50 min | [x] |
+| 6  | Real-time | ~25 min | [x] |
+| 7  | Performance & bonus | leftover buffer | [x] |
+| 8  | Admin UI for properties (nice to have) | ~55 min | [ ] |
+| 9  | Security hardening & extras (nice to have) | documented only | [ ] |
+
 The scaffold is already done: `api/` (Rails 8.1 API, RSpec, rack-attack, rack-cors, Alba, jwt, bullet), `web/` (Vite, React 19, TanStack, Jotai, Tailwind, Vitest + MSW), Docker Compose, Makefile and CI.
 
 **Milestone 1 — Auth & minimum security (~50 min)**
@@ -506,7 +520,7 @@ Data has to exist before anything can be searched. For now it comes from a seed 
 - Admin: CSV import, image uploads, audit log, user/role management.
 - Features and ops: offset paging, saved searches, PostGIS radius search, lograge, `PropertyChangeNotifier` in a Solid Queue job.
 
-**README, kept current in every milestone:** each milestone updates the README for what it built before it is reviewed and committed. A short final pass (5–10 min, from the buffer) then fixes the structure, removes anything stale, and writes the sections that only make sense once everything is built: what I'd do next and the notes from a JS developer learning Rails. Milestone 1 adds the run steps, architecture and threat-model table; Milestone 3 the index + `EXPLAIN` notes (including the `q` plan); Milestone 5 the state-management rationale; Milestone 6 how to trigger a live update; and every milestone its own trade-offs, ticking it off in the progress table. By the end the README covers: one-command setup, demo logins (`demo@example.com`, plus `admin@example.com` if Milestone 8 is built), how to trigger a live update (`demo:change_property` on a property the demo user watches; with Milestone 8, the same through the admin screen in a second window), the decisions and trade-offs in this PRD (including why Vitest instead of Jest) and what I'd do next (PostGIS radius search, saved-search alerts).
+**README, kept current in every milestone:** each milestone updates the README for what it built before it is reviewed and committed. A short final pass (5–10 min, from the buffer) then fixes the structure, removes anything stale, and writes the sections that only make sense once everything is built: what I'd do next and the notes from a JS developer learning Rails. Milestone 1 adds the run steps, architecture and threat-model table; Milestone 3 the index + `EXPLAIN` notes (including the `q` plan); Milestone 5 the state-management rationale; Milestone 6 how to trigger a live update; and every milestone its own trade-offs. Each milestone is ticked off in the progress table above, in this PRD; the README describes what is built and never names milestones. By the end the README covers: one-command setup, demo logins (`demo@example.com`, plus `admin@example.com` if Milestone 8 is built), how to trigger a live update (`demo:change_property` on a property the demo user watches; with Milestone 8, the same through the admin screen in a second window), the decisions and trade-offs in this PRD (including why Vitest instead of Jest) and what I'd do next (PostGIS radius search, saved-search alerts).
 
 **Risks & open questions**
 
