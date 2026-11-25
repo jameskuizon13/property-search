@@ -1,7 +1,9 @@
 .PHONY: setup services dev api web test test-api test-web seed up down pgadmin
 
-## First-time setup: start Postgres/Redis, install deps, create + seed DB
+## First-time setup: start Postgres/Redis, install deps, create + seed DB,
+## install the git hooks (root pnpm install runs husky)
 setup: services
+	pnpm install
 	cd api && bundle install && bin/rails db:prepare db:seed
 	cd web && pnpm install
 

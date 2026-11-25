@@ -1,0 +1,14 @@
+# Lint and test only the packages (api/, web/) this commit touches.
+# See lint-staged.config.mjs. Skip once with `git commit --no-verify`.
+#
+# - diff.renames=false: a file moved out of a package shows up as a deletion
+#   there too, so that package is still checked.
+# - --diff-filter adds D so a commit that only deletes files still runs the
+#   tests.
+# - --hide-all sets aside every unstaged change and untracked file while the
+#   checks run (then puts them back), so they see exactly what is being
+#   committed: a new file you forgot to `git add` makes the tests fail.
+# - --max-arg-length=Infinity keeps lint-staged from splitting the file list
+#   and running a whole test suite once per chunk.
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.renames GIT_CONFIG_VALUE_0=false \
+  pnpm exec lint-staged --diff-filter=ACMRD --hide-all --max-arg-length=Infinity
