@@ -5,9 +5,9 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Milestones 1–6 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API; the search and watchlist UI; live watchlist updates). The work is split into numbered **milestones**
+**Status: Milestones 1–7 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API; the search and watchlist UI; live watchlist updates; rate limits and caching). The work is split into numbered **milestones**
 (build steps that each end with something that runs, passing specs and an updated README; listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
-A label like _(Milestone 7)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
+A label like _(Milestone 8)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
 > The brief asked for Jest. Tests use **Vitest** (same API as Jest) with React Testing Library
 > instead, because Vitest reuses the Vite config, so there is no separate Babel/SWC transform to maintain.
@@ -17,7 +17,7 @@ A label like _(Milestone 7)_ means that part is planned but not built yet. The f
 | Part   | Stack |
 | ------ | ----- |
 | `api/` | Rails 8.1 (API mode), Ruby 3.4, Puma, PostgreSQL 17, Redis 7, ActionCable, `jwt`, Alba, rack-cors, rack-attack, bullet, RSpec + FactoryBot + shoulda-matchers |
-| `web/` | Vite, React 19, TypeScript, TanStack Query, TanStack Router, zod, Jotai, `@rails/actioncable`, Tailwind 4, TanStack Virtual _(installed; used only if time allows, Milestone 7)_, Vitest + React Testing Library + MSW, oxlint |
+| `web/` | Vite, React 19, TypeScript, TanStack Query, TanStack Router, zod, Jotai, `@rails/actioncable`, Tailwind 4, Vitest + React Testing Library + MSW, oxlint |
 
 Infra: Docker Compose (db, redis, api, web), a root `Makefile`, GitHub Actions CI (one job per app), husky + lint-staged git hooks.
 
@@ -229,7 +229,7 @@ Nothing needs copying: every value has a default in code that matches the Docker
 
 | File | Variables | Loaded? |
 | ---- | --------- | ------- |
-| `api/.env.example` | `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `FRONTEND_ORIGIN`, `JWT_SECRET` (commented out; at least 32 bytes or the app refuses to boot; falls back to a key derived from `secret_key_base`), `TRUSTED_PROXIES` (commented out; load balancers whose `X-Forwarded-For` is believed for rate limiting, empty = trust nobody) | **No.** There is no dotenv gem, so a copied `api/.env` is ignored. It documents the defaults in `config/database.yml`, `config/cable.yml` and `config/environments/development.rb`; to change one, export it in your shell. |
+| `api/.env.example` | `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_URL`, `FRONTEND_ORIGIN`, `JWT_SECRET` (commented out; at least 32 bytes or the app refuses to boot; falls back to a key derived from `secret_key_base`), `TRUSTED_PROXIES` (commented out; load balancers whose `X-Forwarded-For` is believed for rate limiting, empty = trust nobody), `GIT_SHA` (commented out; optional deploy revision mixed into search ETags so a new release never reuses old cached bodies; unset, only `ETAG_SCHEMA` does that, bumped by hand) | **No.** There is no dotenv gem, so a copied `api/.env` is ignored. It documents the defaults in `config/database.yml`, `config/cable.yml` and `config/environments/development.rb`; to change one, export it in your shell. |
 | `web/.env.example` | `API_PROXY_TARGET` (where Vite proxies `/api` and `/cable`; default `http://localhost:3000`) | **Yes**, if copied to `web/.env`: `vite.config.ts` uses `loadEnv`. Docker Compose sets it to `http://api:3000`. |
 
 ### Where things live
@@ -240,7 +240,7 @@ Nothing needs copying: every value has a default in code that matches the Docker
 | `api/app/controllers` | API controllers under `/api/v1` |
 | `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
 | `api/app/channels` | ActionCable connection auth; `WatchlistChannel` (one stream per signed-in user) |
-| `api/app/services` | `AuthToken` (JWT issue/verify, cookie options); `PropertyChangeNotifier` (live-update fan-out) |
+| `api/app/services` | `AuthToken` (JWT issue/verify, cookie options); `PropertyChangeNotifier` (live-update fan-out); `SearchCache` (the version that search counts and ETags hang off) |
 | `api/lib/tasks` | `demo:*` tasks for live updates; `search:explain` |
 | `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor`; `Watchlist::ListQuery` and `Watchlist::Cursor` (the user's watchlist, newest added first) |
 | `api/config/pagination.yml` | Default and maximum `limit` (`PAGINATION_DEFAULT_LIMIT`, `PAGINATION_MAX_LIMIT`) |
@@ -467,7 +467,7 @@ Every piece of state has exactly one owner, picked by where it has to survive:
 - **Search page** (`web/src/features/properties`): `FilterBar` writes every filter to the URL. Price min/max are selects with fixed steps, and a max below the min is disabled. Changing a filter starts again from the first batch; a slow response for older filters only lands in their own cache entry, so it can never replace newer results. Text under 2 characters isn't sent (the API would ignore it), so typing one letter doesn't refetch.
 - **The URL is checked, not trusted:** `searchSchema` drops any invalid value from a hand-edited URL (an unknown sort or property type, beds over 5, a max below the min, control characters in `q`) instead of sending a request the API would answer with a 422. Property types can be a JSON array (what the app writes) or the API's comma form (`house,villa`). Unknown keys such as `utm_source` are ignored: they don't count as a filter or split the cache. The router merges raw URL values back in for keys the validator leaves out, so `validateSearch` always returns every filter key. Property-type *values* are hard-coded there as a URL contract; their *labels* come from `GET /property_types`.
 - **`InfiniteResults`** (`web/src/components/ui`) is shared by search and the watchlist. An `IntersectionObserver` with a 600 px margin on a sentinel after the list loads the next batch before you reach the end, guarded by `hasNextPage && !isFetchingNextPage` so it never double-fetches. Cards are de-duplicated by `id`. Loading shows skeleton cards (a row of them at the bottom for later batches); a failed first load shows an error with Retry, worded by cause (connection, server, or a rejected request), and 4xx errors aren't retried automatically; a failed later batch shows an inline Retry and keeps what's loaded; the end shows "End of results"; an empty result says which filters to loosen.
-- **Infinite-scroll traps, and how each is handled:** the list keeps every loaded batch in the Query cache and the router restores scroll position, so going back doesn't lose your place; there is no footer under the list to chase; a "Back to top" button appears once you've scrolled past the first screen with more than one batch loaded, and moves focus to the page heading (smooth scrolling only when reduced motion isn't requested); and a visible "Load more" button works for keyboard and screen-reader users. It stays mounted while loading ("Loading…", `aria-disabled`) and becomes "Retry" after a failure, so focus is never dropped; when the last batch arrives, focus moves to "End of results". The list is not virtualised (Milestone 7, if time allows): fine for a few hundred cards.
+- **Infinite-scroll traps, and how each is handled:** the list keeps every loaded batch in the Query cache and the router restores scroll position, so going back doesn't lose your place; there is no footer under the list to chase; a "Back to top" button appears once you've scrolled past the first screen with more than one batch loaded, and moves focus to the page heading (smooth scrolling only when reduced motion isn't requested); and a visible "Load more" button works for keyboard and screen-reader users. It stays mounted while loading ("Loading…", `aria-disabled`) and becomes "Retry" after a failure, so focus is never dropped; when the last batch arrives, focus moves to "End of results". The list is not virtualised; off-screen cards skip layout and paint instead (see [N+1, rate limiting & caching](#n1-rate-limiting--caching-prd)).
 - **Watch toggle** (`web/src/features/watchlist/useToggleWatch.ts`): the card changes at once in every cached list (search batches and the watchlist). Each click sends the state it wants, and clicks for one property share a TanStack Query mutation `scope`, so they run one at a time in click order and a PUT and DELETE can't finish out of order. If a request fails and no later click is queued, the card goes back to the last state the server confirmed and a toast says so. Signed-out users go to `/login?next=…` and come back to the same page.
 - **Unwatching on the watchlist page keeps the card in place** (now showing "Watch", so one click undoes it) and marks the watchlist stale; it refreshes on your next visit.
 - **Toasts by default** (`web/src/components/ui/Toaster.tsx`): sign in/up/out confirmations, form-wide login and signup errors, a failed watch, and sign-outs. Field errors stay next to their input, and a search that fails to load stays on the page with its Retry. The toast region is always in the DOM with `aria-live="polite"`, so screen readers announce new toasts. Toasts last 5 s (errors 10 s) and pause while hovered or focused.
@@ -482,7 +482,21 @@ Every piece of state has exactly one owner, picked by where it has to survive:
 
 - `bullet` is in the development and test groups: it logs in development and raises in the test suite (`Bullet.raise = true`), so any request spec with an N+1 fails. `spec/config/bullet_spec.rb` proves it still raises.
 - rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store. _(Milestone 1)_
-- Per-route rack-attack throttles for search and watchlist writes, and Redis-cached search counts, come in Milestone 7.
+- **Per-route throttles** (`api/config/initializers/rack_attack.rb`), all returning the same 429 body with `Retry-After`:
+
+  | Rule | Limit | Keyed by |
+  | ---- | ----- | -------- |
+  | `api/ip` | 300 per 5 min, every `/api/*` request | client IP |
+  | `auth/ip` | 10 per min, login and signup | client IP |
+  | `search/ip` | 120 per min, `GET /properties` (bursts; `api/ip` caps the sustained rate) | client IP |
+  | `watchlist/user` | 60 per min, `PUT`/`DELETE /watchlist/:id` (reads don't count) | user id from the JWT, checked in the middleware without a DB query |
+
+  The web app says so: a rate-limited search or next batch shows "Too many requests in a short time" with Retry (it isn't retried automatically), and a rate-limited watch click rolls back with its own toast. `search/ip` also counts `HEAD` and the `.json` suffix.
+- **Cached counts:** `totalCount` (first batch only) comes from `Rails.cache` (Redis) for 60 s, keyed by the parsed filters that change it (not the cursor, limit or user) and by `SearchCache.version`. Every property create, update or delete bumps that version after commit, so all cached counts miss at once; the seed bumps it too, since `insert_all` skips callbacks.
+- **ETag before the query:** search computes a weak ETag from what the response depends on (the search cache version, the user, the user's watchlist as `COUNT` + `MAX(id)`, the normalised params, and the deploy revision) and answers `304 Not Modified` before running the search. A 304 costs the user lookup and one index-only query. `Cache-Control: private, max-age=0, must-revalidate`, so browsers revalidate every time and shared caches never store it. Equivalent URLs (types in another order, an ignored one-letter `q`) share one ETag.
+- **Property types** are a constant list served with `Cache-Control: public, max-age=3600` rather than copied into Redis.
+- **No list virtualisation.** Each result card has `content-visibility: auto`, so the browser skips layout and paint for cards far off screen, while every card stays in the DOM, in find-in-page and in the screen-reader list. Its placeholder height is a formula that matches the real card (a 3:2 photo as wide as the grid cell plus a 190 px text block, measured from the list's own width with container units; within a few pixels of the real card at phone, tablet and desktop widths), so Back lands on the same card. Only the height is set: a placeholder width would widen the single phone column. TanStack Virtual would have needed row chunking for the responsive grid, fought router scroll restoration, and hidden off-screen cards from find-in-page and assistive tech; it would pay off at thousands of cards, not hundreds.
+- Known gaps: the search cache version lives in Redis with a 15-minute expiry, so if Redis loses a bump, a stale 304 can last at most 15 minutes (a failed bump is reported); writes that skip callbacks (`update_all`, `insert_all`, `delete`) don't bump it, and nothing in the app uses them on properties outside the seed; two watchlist changes by one user committed at the same moment could leave the fingerprint unchanged; in Docker Compose every browser shares one IP bucket for `search/ip` too.
 
 ## Build progress
 
@@ -499,7 +513,7 @@ Milestones 8–9 are nice-to-haves.
 | 4  | Watchlist API | ~15 min | [x] |
 | 5  | Search & watchlist UI | ~50 min | [x] |
 | 6  | Real-time | ~25 min | [x] |
-| 7  | Performance & bonus | leftover buffer | [ ] |
+| 7  | Performance & bonus | leftover buffer | [x] |
 | 8  | Admin UI for properties (nice to have) | ~55 min | [ ] |
 | 9  | Security hardening & extras (nice to have) | documented only | [ ] |
 

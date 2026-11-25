@@ -53,7 +53,7 @@ module Properties
       meta[:next_cursor] = Cursor.encode(sort:, record: rows.last) if has_more
       # Counted once, for the first batch only; later batches reuse it. When
       # the first batch already holds every row, its size is the count.
-      meta[:total_count] = has_more ? filtered.count : rows.size if cursor.nil?
+      meta[:total_count] = has_more ? total_count : rows.size if cursor.nil?
 
       Result.new(records: rows, meta:)
     end
@@ -83,9 +83,35 @@ module Properties
       scope
     end
 
+    # Every parsed value a response depends on, after defaults and
+    # normalisation, so equivalent URLs (reordered types, a 1-letter q that is
+    # ignored, an explicit default limit) share one ETag. Call after validate!.
+    def cache_key_parts
+      count_key_parts.merge(sort:, cursor:, limit:)
+    end
+
+    # COUNT(*) of the filtered rows, cached for 60 s per filter set and search
+    # cache version. Not keyed by cursor, limit or user: none of them change it.
+    def total_count
+      Rails.cache.fetch([ "search-count", SearchCache.version, count_key_parts ], expires_in: 60.seconds) do
+        filtered.count
+      end
+    end
+
     private
 
     attr_reader :params, :user
+
+    # What the count depends on. Sort matters only as "price sort or not",
+    # because price sorts leave out withheld prices. q is not downcased: Ruby's
+    # and Postgres' case folding differ for some characters.
+    def count_key_parts
+      {
+        q:, min_price:, max_price:, min_bedrooms:,
+        property_types: property_types&.uniq&.sort,
+        exclude_under_offer:, exclude_price_withheld: exclude_price_withheld || price_sort?
+      }
+    end
 
     def price_sort? = sort != "newest"
 

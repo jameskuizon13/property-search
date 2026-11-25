@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/*
+ * Result cards far off screen skip layout and paint, while staying in the DOM,
+ * find-in-page and the accessibility tree (instead of list virtualisation).
+ * The placeholder height is one card's real height: a 3:2 photo as wide as
+ * the grid cell plus a 190px text block (measured at every breakpoint), so
+ * restoring the scroll position on Back lands where it should. `auto` then
+ * remembers each card's real size once it has rendered.
+ * Height only: a placeholder width would widen the grid's column on phones.
+ * The list is a size container (`@container` on the <ul>), so 100cqw is its
+ * exact width, whatever the page padding or a permanent scrollbar take up.
+ * Cell width: the list's width minus the 1.5rem gaps, over the column count.
+ */
+@utility offscreen-skip {
+  content-visibility: auto;
+  contain-intrinsic-height: auto calc(100cqw * 2 / 3 + 190px);
+
+  @media (width >= 40rem) {
+    contain-intrinsic-height: auto calc((100cqw - 1.5rem) / 3 + 190px);
+  }
+
+  @media (width >= 64rem) {
+    contain-intrinsic-height: auto calc((100cqw - 3rem) * 2 / 9 + 190px);
+  }
+}

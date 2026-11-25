@@ -52,6 +52,8 @@ class Property < ApplicationRecord
   # would log the first change but not broadcast it.
   after_update :record_change_events, if: :price_or_status_changed?
   after_update_commit :notify_watchers, if: :price_or_status_changed?
+  # Any change can move search results or counts (see SearchCache).
+  after_commit :bump_search_cache, on: %i[create update destroy]
 
   normalizes :street_address, :suburb, :price_display, with: ->(value) { value.strip }
   normalizes :state, with: ->(value) { value.strip.upcase }
@@ -94,4 +96,6 @@ class Property < ApplicationRecord
   end
 
   def notify_watchers = PropertyChangeNotifier.call(self)
+
+  def bump_search_cache = SearchCache.bump!
 end

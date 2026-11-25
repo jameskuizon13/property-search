@@ -4,7 +4,7 @@ import { delay, http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { signedIn, signedOut } from '@/test/authHandlers'
 import { scrollSentinelIntoView } from '@/test/intersectionObserver'
-import { makeProperty, page, serverError } from '@/test/propertyHandlers'
+import { makeProperty, page, rateLimited, serverError } from '@/test/propertyHandlers'
 import { renderApp } from '@/test/renderApp'
 import { server } from '@/test/server'
 import { toasts } from '@/test/utils'
@@ -48,6 +48,22 @@ describe('WatchButton', () => {
     await user.click(button)
 
     expect(await toasts().findByText("Couldn't update your watchlist. Please try again.")).toBeInTheDocument()
+    expect(button).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('says so when watching too quickly (429), and rolls back', async () => {
+    server.use(
+      signedIn(),
+      searchReturns(smithSt),
+      http.put('*/api/v1/watchlist/42', rateLimited),
+    )
+    const user = userEvent.setup()
+    renderApp('/search')
+    const button = await watchButton()
+
+    await user.click(button)
+
+    expect(await toasts().findByText(/changing your watchlist too quickly/)).toBeInTheDocument()
     expect(button).toHaveAttribute('aria-pressed', 'false')
   })
 

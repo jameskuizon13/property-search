@@ -66,7 +66,12 @@ export function useToggleWatch(propertyId: number) {
       }
       if (clicksInFlight() > 1) return
       patchCachedProperty(queryClient, propertyId, { watched: confirmed.get(propertyId) })
-      toast("Couldn't update your watchlist. Please try again.", 'error')
+      toast(
+        error instanceof ApiError && error.status === 429
+          ? "You're changing your watchlist too quickly. Try again in a minute."
+          : "Couldn't update your watchlist. Please try again.",
+        'error',
+      )
     },
     onSettled: () => {
       if (clicksInFlight() > 1) return
