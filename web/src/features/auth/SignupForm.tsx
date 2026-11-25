@@ -1,15 +1,16 @@
 import { Link } from '@tanstack/react-router'
 import type { FormEvent } from 'react'
+import { useToast } from '@/components/ui/toast'
 import { ApiError } from '@/lib/api'
 import { authErrorMessage } from './errorMessage'
 import { FormField } from './FormField'
 import { useSignup } from './useAuthMutations'
 
 export function SignupForm({ next, onSuccess }: { next?: string; onSuccess: () => void }) {
+  const toast = useToast()
   const signupMutation = useSignup()
   const error = signupMutation.error
   const fieldErrors = error instanceof ApiError && error.status === 422 ? (error.details ?? {}) : {}
-  const message = authErrorMessage(error)
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -20,17 +21,19 @@ export function SignupForm({ next, onSuccess }: { next?: string; onSuccess: () =
         email: String(form.get('email')),
         password: String(form.get('password')),
       },
-      { onSuccess },
+      {
+        onSuccess,
+        // Errors about the whole form are toasts; field errors (422) stay inline.
+        onError: (err) => {
+          const message = authErrorMessage(err)
+          if (message) toast(message, 'error')
+        },
+      },
     )
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      {message && (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          {message}
-        </p>
-      )}
       <FormField label="Name" name="name" autoComplete="name" required errors={fieldErrors.name} />
       <FormField label="Email" name="email" type="email" autoComplete="email" required errors={fieldErrors.email} />
       <FormField

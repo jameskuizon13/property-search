@@ -1,6 +1,8 @@
-import { Link, Outlet, useNavigate } from '@tanstack/react-router'
+import { Link, Outlet, useNavigate, useRouter } from '@tanstack/react-router'
+import { Toaster } from '@/components/ui/Toaster'
 import { useLogout } from '@/features/auth/useAuthMutations'
 import { useMe } from '@/features/auth/useMe'
+import { useSessionEvents } from '@/features/auth/useSessionEvents'
 
 const navLink = 'text-sm font-medium text-slate-600 hover:text-slate-900 [&.active]:text-indigo-600'
 
@@ -8,6 +10,7 @@ function AccountNav() {
   const { data: user, isPending } = useMe()
   const logoutMutation = useLogout()
   const navigate = useNavigate()
+  const router = useRouter()
 
   if (isPending) return null
 
@@ -34,7 +37,14 @@ function AccountNav() {
         type="button"
         className={navLink}
         disabled={logoutMutation.isPending}
-        onClick={() => logoutMutation.mutate(undefined, { onSettled: () => navigate({ to: '/search' }) })}
+        onClick={() =>
+          logoutMutation.mutate(undefined, {
+            // Leave a page that needs an account; stay on a public one, filters and all.
+            onSuccess: () => {
+              if (router.state.matches.some((match) => match.staticData.requiresAuth)) void navigate({ to: '/search' })
+            },
+          })
+        }
       >
         Log out
       </button>
@@ -43,6 +53,7 @@ function AccountNav() {
 }
 
 export function RootLayout() {
+  useSessionEvents()
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
@@ -62,6 +73,7 @@ export function RootLayout() {
         </nav>
       </header>
       <Outlet />
+      <Toaster />
     </div>
   )
 }

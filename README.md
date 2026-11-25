@@ -5,7 +5,7 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Milestones 1–4 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API). The work is split into numbered **milestones**
+**Status: Milestones 1–5 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API; the search and watchlist UI). The work is split into numbered **milestones**
 (build steps that each end with something that runs, passing specs and an updated README; listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
 A label like _(Milestone 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
@@ -247,7 +247,7 @@ Nothing needs copying: every value has a default in code that matches the Docker
 | `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `support/` |
 | `web/src/features` | Feature code: `auth/`, `properties/`, `watchlist/` |
 | `web/src/routes` | TanStack Router routes |
-| `web/src/lib` | API client, cable consumer, Query client |
+| `web/src/lib` | API client, cable consumer, Query client, query-key factory |
 | `web/src/components` | Shared UI (`ui/`) |
 
 ### Demo logins
@@ -319,7 +319,7 @@ list with its new badge until the next refetch, rather than vanishing under the 
 - Assumes web and API are on the same site (e.g. `app.` and `api.` subdomains); in dev the Vite proxy gives one origin.
 - CSRF (another site making the browser send a request with your cookie): `SameSite=Lax` (the browser won't attach the cookie to cross-site `POST`s) plus an `Origin` check against `FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`.
 - Logout disconnects all of that user's live sockets on every device; other devices simply reconnect with their still-valid cookie.
-- Where it lives: `AuthToken` (`api/app/services/auth_token.rb`) issues and verifies the token; `Api::V1::BaseController` reads the cookie (`authenticate!`) and runs the `Origin` check; `ApplicationCable::Connection` reuses `AuthToken`. On the web, `apiFetch` sends `credentials: 'include'` and never sees the token; `requireAuth` guards routes in `beforeLoad`; a 401 anywhere else clears cached data and goes to `/login?next=…` (only same-app paths are accepted as `next`).
+- Where it lives: `AuthToken` (`api/app/services/auth_token.rb`) issues and verifies the token; `Api::V1::BaseController` reads the cookie (`authenticate!`) and runs the `Origin` check; `ApplicationCable::Connection` reuses `AuthToken`. On the web, `apiFetch` sends `credentials: 'include'` and never sees the token; `requireAuth` guards routes in `beforeLoad`; a 401 anywhere else clears the user's cached data, shows "You've been signed out" and re-runs the route guards, so only a protected page goes to `/login?next=…` and search stays put (only same-app paths are accepted as `next`). Logging out in one tab signs out the app's other tabs through a `BroadcastChannel('auth')` (see [Search & watchlist UI](#search--watchlist-ui-prd)).
 
 **Threat model (Milestone 1)**
 
@@ -431,10 +431,33 @@ Trade-off: a very common `q` that is also rare among the newest listings could s
 
 ### State management ([PRD](PRD.md#frontend-architecture))
 
-- **Server state:** TanStack Query (search pages, watchlist, `/me`).
-- **URL state:** TanStack Router search params, validated by a zod schema in `validateSearch` (`q`, price, beds, types, sort).
-- **Client state:** Jotai (toasts, cable status, drawer open, auth-redirect target).
-- Filters live only in the URL, never copied into Jotai, so back/forward, refresh and shared links work with no sync code.
+Every piece of state has exactly one owner, picked by where it has to survive:
+
+| Kind | Owner | What | Why there |
+| --- | --- | --- | --- |
+| Server state | TanStack Query | search batches, the watchlist, `/me`, the property-type labels | It's a copy of the server's data: Query owns caching, refetching, de-duplicating requests, cancelling stale ones and optimistic updates, which would all be hand-written in a client store. |
+| URL state | TanStack Router search params, validated by `searchSchema` (zod) in `validateSearch` | `q`, min/max price, beds, property types, the two "exclude" toggles, sort | Filters must survive refresh, back/forward and a shared link. In the URL they do with no sync code. Cursors stay in the Query cache, not the URL. |
+| Client state | Jotai | toasts (cable status joins in Milestone 6) | Small, app-wide UI state with no server copy. One atom per concern, so a toast never re-renders the results grid. |
+
+- Filters are never copied into Jotai or `useState`: the page reads them from the URL and writes them back with `navigate`. The only local copy is the text box while you type, which writes to the URL 300 ms after the last keystroke (with `replace`, so typing doesn't fill the history).
+- The search query key is the normalised filter object (`propertyKeys.list(filters)` in `web/src/lib/queryKeys.ts`), so a filter change is a new cache entry starting from the first batch, and going back to earlier filters reuses their cached batches.
+- Why not Redux/Zustand for everything: server data in a client store means hand-writing caching and invalidation; URL state in a client store means syncing it both ways.
+
+### Search & watchlist UI ([PRD](PRD.md#frontend-architecture))
+
+- **Search page** (`web/src/features/properties`): `FilterBar` writes every filter to the URL. Price min/max are selects with fixed steps, and a max below the min is disabled. Changing a filter starts again from the first batch; a slow response for older filters only lands in their own cache entry, so it can never replace newer results. Text under 2 characters isn't sent (the API would ignore it), so typing one letter doesn't refetch.
+- **The URL is checked, not trusted:** `searchSchema` drops any invalid value from a hand-edited URL (an unknown sort or property type, beds over 5, a max below the min, control characters in `q`) instead of sending a request the API would answer with a 422. Property types can be a JSON array (what the app writes) or the API's comma form (`house,villa`). Unknown keys such as `utm_source` are ignored: they don't count as a filter or split the cache. The router merges raw URL values back in for keys the validator leaves out, so `validateSearch` always returns every filter key. Property-type *values* are hard-coded there as a URL contract; their *labels* come from `GET /property_types`.
+- **`InfiniteResults`** (`web/src/components/ui`) is shared by search and the watchlist. An `IntersectionObserver` with a 600 px margin on a sentinel after the list loads the next batch before you reach the end, guarded by `hasNextPage && !isFetchingNextPage` so it never double-fetches. Cards are de-duplicated by `id`. Loading shows skeleton cards (a row of them at the bottom for later batches); a failed first load shows an error with Retry, worded by cause (connection, server, or a rejected request), and 4xx errors aren't retried automatically; a failed later batch shows an inline Retry and keeps what's loaded; the end shows "End of results"; an empty result says which filters to loosen.
+- **Infinite-scroll traps, and how each is handled:** the list keeps every loaded batch in the Query cache and the router restores scroll position, so going back doesn't lose your place; there is no footer under the list to chase; a "Back to top" button appears once you've scrolled past the first screen with more than one batch loaded, and moves focus to the page heading (smooth scrolling only when reduced motion isn't requested); and a visible "Load more" button works for keyboard and screen-reader users. It stays mounted while loading ("Loading…", `aria-disabled`) and becomes "Retry" after a failure, so focus is never dropped; when the last batch arrives, focus moves to "End of results". The list is not virtualised (Milestone 7, if time allows): fine for a few hundred cards.
+- **Watch toggle** (`web/src/features/watchlist/useToggleWatch.ts`): the card changes at once in every cached list (search batches and the watchlist). Each click sends the state it wants, and clicks for one property share a TanStack Query mutation `scope`, so they run one at a time in click order and a PUT and DELETE can't finish out of order. If a request fails and no later click is queued, the card goes back to the last state the server confirmed and a toast says so. Signed-out users go to `/login?next=…` and come back to the same page.
+- **Unwatching on the watchlist page keeps the card in place** (now showing "Watch", so one click undoes it) and marks the watchlist stale; it refreshes on your next visit.
+- **Toasts by default** (`web/src/components/ui/Toaster.tsx`): sign in/up/out confirmations, form-wide login and signup errors, a failed watch, and sign-outs. Field errors stay next to their input, and a search that fails to load stays on the page with its Retry. The toast region is always in the DOM with `aria-live="polite"`, so screen readers announce new toasts. Toasts last 5 s (errors 10 s) and pause while hovered or focused.
+- **Logout** stays on a public page (filters kept) and leaves `/watchlist` for search. If the logout request fails, the app says so and keeps you signed in, since the cookie may still be valid; a 401 counts as already signed out.
+- **Cross-tab sign-out:** logout posts `signed-out` on a `BroadcastChannel('auth')`. Other tabs clear the user's data (user, watchlist, `watched` flags) and show "You were signed out in another tab"; a tab on `/watchlist` goes to `/login?next=/watchlist`, and a tab on search stays where it is in its signed-out view. A tab that was already signed out shows nothing.
+- **Accessibility:** the watch button is a toggle (`aria-pressed`) whose name starts with its visible text ("Watch"/"Watching") followed by the address; selected property-type chips show a tick, not just a colour.
+- **Performance:** cards are memoised and a toggle replaces only that property's object in the cache, so one click re-renders one card. Routes are code-split (`lazyRouteComponent`).
+- A click cancels any list fetch already in flight before patching the cache, because that fetch copied the pages before the click and would write them back over it (TanStack Query's standard optimistic-update step). A cancelled next batch goes back to its earlier state and the sentinel asks for it again.
+- Trade-off: filters have no mobile drawer yet; they wrap instead.
 
 ### N+1, rate limiting & caching ([PRD](PRD.md#non-functional-requirements))
 
@@ -449,17 +472,17 @@ ends with, leaving a **20-minute buffer** inside 4 hours. A short final README p
 that buffer. Milestone 7 only uses leftover buffer.
 Milestones 8–9 are nice-to-haves.
 
-| Milestone | Name | Estimate | Actual | Done |
-| --------- | ---- | -------- | ------ | ---- |
-| 1  | Auth & minimum security | ~50 min | | [x] |
-| 2  | Property data & seeds | ~25 min | | [x] |
-| 3  | Search API | ~40 min | | [x] |
-| 4  | Watchlist API | ~15 min | | [x] |
-| 5  | Search & watchlist UI | ~50 min | | [ ] |
-| 6  | Real-time | ~25 min | | [ ] |
-| 7  | Performance & bonus | leftover buffer | | [ ] |
-| 8  | Admin UI for properties (nice to have) | ~55 min | | [ ] |
-| 9  | Security hardening & extras (nice to have) | documented only | | [ ] |
+| Milestone | Name | Estimate | Done |
+| --------- | ---- | -------- | ---- |
+| 1  | Auth & minimum security | ~50 min | [x] |
+| 2  | Property data & seeds | ~25 min | [x] |
+| 3  | Search API | ~40 min | [x] |
+| 4  | Watchlist API | ~15 min | [x] |
+| 5  | Search & watchlist UI | ~50 min | [x] |
+| 6  | Real-time | ~25 min | [ ] |
+| 7  | Performance & bonus | leftover buffer | [ ] |
+| 8  | Admin UI for properties (nice to have) | ~55 min | [ ] |
+| 9  | Security hardening & extras (nice to have) | documented only | [ ] |
 
 ## Notes from a JS/TS developer learning Rails
 
@@ -467,7 +490,6 @@ _To be written as I go._
 
 - What surprised me: _TODO_
 - What I hand-rolled and would now replace with a Rails built-in: _TODO_
-- Time spent vs estimate: _TODO_
 
 ## What I'd do next
 

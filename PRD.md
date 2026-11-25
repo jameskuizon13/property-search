@@ -102,7 +102,7 @@ Each requirement below has acceptance criteria a test can check.
 - The header shows the total once (“1,284 properties”), taken from the first response.
 - While a batch loads, a row of skeleton cards appears at the bottom. If it fails, an inline “Retry” appears there without losing the results already loaded.
 - *(Optional, Milestone 7)* Virtualise the list with TanStack Virtual so the DOM stays small after hundreds of cards. Plain infinite scroll ships first; virtualisation is added only if time remains, because it changes how the next batch is triggered (see Frontend architecture).
-- Going back from a property keeps the loaded batches and scroll position (Query cache + router scroll restoration). A “Back to top” button appears after the first batch.
+- Going back from a property keeps the loaded batches and scroll position (Query cache + router scroll restoration). A “Back to top” button appears once more than one batch is loaded and the page is scrolled past the first screen; it moves focus to the page heading.
 - Keyboard and screen-reader users get a visible “Load more” button as a fallback to the sentinel.
 
 **FR-4 Watchlist**
@@ -110,7 +110,7 @@ Each requirement below has acceptance criteria a test can check.
 - Add and remove are idempotent. Adding twice returns 200 with the existing item. Removing an item that isn't there returns 204.
 - The toggle updates optimistically and rolls back with a toast if the request fails.
 - Fast repeated clicks end in the state of the last click. Toggles for the same property are queued (a TanStack Query mutation `scope` per property), so a `PUT` and a `DELETE` can never finish out of order and leave the button and the server disagreeing.
-- The watchlist page uses the same infinite list component, sorted by date added. Its query is not scoped to `Property.active`, so a watched property that sells or is withdrawn stays on the watchlist with its new badge.
+- The watchlist page uses the same infinite list component, sorted by date added. Unwatching there keeps the card in place (showing “Watch”, so one click undoes it) and marks the list stale, so it refreshes on the next visit instead of the card vanishing under the cursor. Its query is not scoped to `Property.active`, so a watched property that sells or is withdrawn stays on the watchlist with its new badge.
 - Signed-out users who click watch are sent to log in, then returned to the same page.
 
 **FR-5 Auth**
@@ -118,7 +118,7 @@ Each requirement below has acceptance criteria a test can check.
 - Sign up, log in, log out, and `GET /me`. Email is unique and case-insensitive (stored trimmed and lowercased). Password is 12–72 characters (72 is bcrypt's byte limit). Rejecting breached passwords is a Milestone 9 item.
 - Search is public. Watchlist endpoints and the cable connection require auth.
 - Errors about the whole form (wrong email or password, too many attempts, anything unexpected) show as toasts. Errors about one field (for example, a password that's too short) stay next to that input. Signing in, creating an account and signing out each confirm with a toast (“Signed in”, “Account created”, “Signed out”).
-- Logging out in one tab signs out every other open tab of the app in that browser straight away. Those tabs switch to the signed-out view (the header shows “Log in”, Watch asks you to sign in) and show the toast “You were signed out in another tab”. A tab on a protected page (`/watchlist`) goes to `/login?next=…`; a tab on a public page stays where it is, because search doesn't need an account.
+- Logging out in one tab signs out every other open tab of the app in that browser straight away. Those tabs switch to the signed-out view (the header shows “Sign in”, Watch asks you to sign in) and show the toast “You were signed out in another tab”. A tab on a protected page (`/watchlist`) goes to `/login?next=…`; a tab on a public page stays where it is, because search doesn't need an account.
 - If a request gets a 401 anyway (logout on another device, or the 24-hour token expired), the app does the same with the toast “You've been signed out”. An action that needs sign-in, like Watch, also goes to `/login?next=…`. The login form's own 401 is a wrong password, not a sign-out: it shows the “Invalid email or password” toast, not the signed-out one.
 
 **FR-6 Real-time updates**
@@ -307,7 +307,7 @@ State is split three ways, and no piece of state lives in two places. This split
 | --- | --- | --- |
 | Server state | TanStack Query | search pages, watchlist, `/me` |
 | URL state | TanStack Router search params, validated by a zod schema in `validateSearch` | `q`, price, beds, types, sort (cursors stay in the Query cache, not the URL) |
-| Client/UI state | Jotai | toasts, cable connection status, filter drawer open, auth-redirect target |
+| Client/UI state | Jotai | toasts, cable connection status (the sign-in return target lives in the URL as `?next=`) |
 
 Filters are **not** copied into Jotai. The URL is their single source of truth, so back/forward, refresh and shared links all work without sync code.
 
@@ -318,23 +318,23 @@ Filters are **not** copied into Jotai. The URL is their single source of truth, 
 ```
 web/src/
   main.tsx, router.tsx   entry point, route tree, providers
-  routes/         route components (search, watchlist, login, signup)
+  routes/         root layout, login and signup pages (search and watchlist pages live in their features)
   features/
-    properties/   SearchPage, FilterBar, PriceRange, BedroomsSelect, PropertyTypeMulti, useSearchProperties, searchSchema (zod, used by validateSearch)
+    properties/   SearchPage, FilterBar (text, price, beds, types, toggles, sort), PropertyResultCard, hooks (useSearchProperties, usePropertyTypes), cache (patchCachedProperty), searchSchema (zod, used by validateSearch)
     watchlist/    WatchlistPage, WatchButton, useToggleWatch, useWatchlistChannel
-    auth/         authAtoms, LoginForm, SignupForm, useMe, requireAuth, requireAdmin
+    auth/         LoginForm, SignupForm, useMe, requireAuth, session (clearUserData, BroadcastChannel), useSessionEvents, requireAdmin (Milestone 8)
     admin/        (Milestone 8) AdminPropertiesPage (table + pager + filter), PropertyForm (create/edit), useAdminProperties, useSaveProperty, useDeleteProperty
   components/
-    ui/           PropertyCard, InfiniteResults (list + sentinel + Load more; virtualised in Milestone 7 if time allows), Skeleton, EmptyState, ErrorState, Toast
+    ui/           PropertyCard, InfiniteResults (list + sentinel + Load more; virtualised in Milestone 7 if time allows), Skeleton, states (EmptyState, ErrorState), Toaster + toast atoms
   lib/            api.ts (fetch client), cable.ts (ActionCable consumer), queryClient.ts, query keys factory
   test/           Vitest setup, MSW server, render helpers
 ```
 
 **Key behaviours**
 
-- `useSearchProperties(filters)` wraps `useInfiniteQuery` with `queryKey: ['properties', filters]`, `initialPageParam: null`, `getNextPageParam: last => last.meta.hasMore ? last.meta.nextCursor : undefined`, and `staleTime: 30s`. `InfiniteResults` flattens `pages[]` and renders the cards. An IntersectionObserver on a sentinel element after the list calls `fetchNextPage` when `hasNextPage && !isFetchingNextPage`, which prevents double fetches. All loaded pages stay in the cache (no `maxPages`): dropping early pages would need backwards cursors and would break returning to the same scroll position.
+- `useSearchProperties(filters)` wraps `useInfiniteQuery` with `queryKey: propertyKeys.list(filters)` (`['properties', 'list', filters]`, the normalised filters), `initialPageParam: null`, `getNextPageParam: last => last.meta.hasMore ? last.meta.nextCursor : undefined`, and `staleTime: 30s`. `InfiniteResults` flattens `pages[]` and renders the cards. An IntersectionObserver on a sentinel element after the list calls `fetchNextPage` when `hasNextPage && !isFetchingNextPage`, which prevents double fetches. All loaded pages stay in the cache (no `maxPages`): dropping early pages would need backwards cursors and would break returning to the same scroll position.
 - *(Optional, Milestone 7)* If the list is virtualised with TanStack Virtual, off-screen rows aren't in the DOM, so the sentinel is replaced by a check on `getVirtualItems()`: when the last rendered item is within a few rows of the end, fetch the next page.
-- `useToggleWatch` makes an optimistic `onMutate` patch across all property caches, rolls back in `onError`, and invalidates the watchlist in `onSettled`. Its mutations use ``scope: { id: `watch-${propertyId}` }``, so toggles for one property run one after another, in click order.
+- `useToggleWatch` makes an optimistic `onMutate` patch across all property caches, rolls back in `onError` (to the last state the server confirmed, and only when no later click is queued), and marks the watchlist stale in `onSettled` without refetching it. Its mutations use ``scope: { id: `watch-${propertyId}` }``, so toggles for one property run one after another, in click order.
 - **Feedback uses toasts by default:** results of actions (sign in/up/out, form-wide errors, a failed watch), live updates and sign-outs. Two things stay inline: field errors, which must sit next to their input and stay visible while it's fixed, and failures that leave the page with nothing to show (search failing to load, with its Retry), because a toast would fade and leave no way to retry. Empty states are page content, not notifications. Watch clicks get no toast; the button changing is the feedback.
 - Query-key factory (`propertyKeys.list(params)`) keeps keys consistent across hooks, the cable hook and tests.
 
@@ -342,7 +342,7 @@ web/src/
 
 **Performance**
 
-- `PropertyCard` is wrapped in `React.memo`, and `WatchButton` receives a stable `onToggle` from `useCallback`, so toggling one card re-renders only that card.
+- `PropertyResultCard` (the card plus its `WatchButton`) is wrapped in `React.memo`, and a toggle replaces only that property's object in the cache, so toggling one card re-renders only that card. Each `WatchButton` owns its `useToggleWatch`, whose mutation `scope` is per property.
 - Jotai atoms are kept small (one per concern), so a toast doesn't re-render the results grid.
 - The free-text filter is debounced. Price inputs update the URL on commit, not on every keystroke.
 - Routes are code-split. Tailwind is used for styling with no runtime CSS-in-JS.
@@ -506,10 +506,10 @@ Data has to exist before anything can be searched. For now it comes from a seed 
 - Admin: CSV import, image uploads, audit log, user/role management.
 - Features and ops: offset paging, saved searches, PostGIS radius search, lograge, `PropertyChangeNotifier` in a Solid Queue job.
 
-**README, kept current in every milestone:** each milestone updates the README for what it built before it is reviewed and committed. A short final pass (5–10 min, from the buffer) then fixes the structure, removes anything stale, and writes the sections that only make sense once everything is built: total time spent, what I'd do next, and the notes from a JS developer learning Rails. Milestone 1 adds the run steps, architecture and threat-model table; Milestone 3 the index + `EXPLAIN` notes (including the `q` plan); Milestone 5 the state-management rationale; Milestone 6 how to trigger a live update; and every milestone its own trade-offs and the time actually spent, in the progress table. By the end the README covers: one-command setup, demo logins (`demo@example.com`, plus `admin@example.com` if Milestone 8 is built), how to trigger a live update (`demo:change_property` on a property the demo user watches; with Milestone 8, the same through the admin screen in a second window), the decisions and trade-offs in this PRD (including why Vitest instead of Jest), time actually spent, and what I'd do next (PostGIS radius search, saved-search alerts).
+**README, kept current in every milestone:** each milestone updates the README for what it built before it is reviewed and committed. A short final pass (5–10 min, from the buffer) then fixes the structure, removes anything stale, and writes the sections that only make sense once everything is built: what I'd do next and the notes from a JS developer learning Rails. Milestone 1 adds the run steps, architecture and threat-model table; Milestone 3 the index + `EXPLAIN` notes (including the `q` plan); Milestone 5 the state-management rationale; Milestone 6 how to trigger a live update; and every milestone its own trade-offs, ticking it off in the progress table. By the end the README covers: one-command setup, demo logins (`demo@example.com`, plus `admin@example.com` if Milestone 8 is built), how to trigger a live update (`demo:change_property` on a property the demo user watches; with Milestone 8, the same through the admin screen in a second window), the decisions and trade-offs in this PRD (including why Vitest instead of Jest) and what I'd do next (PostGIS radius search, saved-search alerts).
 
 **Risks & open questions**
 
 - [ ] **Infinite scroll UX traps.** Losing position on back, an unreachable footer, and the list being hard to use by keyboard. Mitigations: keep the Query cache + router scroll restoration, put no footer under the list, show “Back to top”, and offer a “Load more” button fallback. The README explains each one.
-- [ ] **Scope vs 3–4 h.** Milestone 1 is the heaviest and the least familiar (Rails auth and ActionCable), so it can overrun. Milestone 1 already uses a fixed 24-hour `exp` with no renewal to keep it small. If it still passes 60 minutes, ship login, signup and the cookie first, and add cable auth and the rack-attack store before starting Milestone 2. Lean on Rails built-ins and the scaffold rather than hand-rolling: `has_secure_password`, `authenticate_by`, the scaffolded rack-attack rules, `ActiveModel::Model` validations for `Properties::SearchQuery`, model scopes for each filter, and `config_for(:pagination)`. The admin UI (Milestone 8) starts only once Milestones 1–7 are done. Record the time actually spent per milestone in the README's progress table as each one finishes.
+- [ ] **Scope vs 3–4 h.** Milestone 1 is the heaviest and the least familiar (Rails auth and ActionCable), so it can overrun. Milestone 1 already uses a fixed 24-hour `exp` with no renewal to keep it small. If it still passes 60 minutes, ship login, signup and the cookie first, and add cable auth and the rack-attack store before starting Milestone 2. Lean on Rails built-ins and the scaffold rather than hand-rolling: `has_secure_password`, `authenticate_by`, the scaffolded rack-attack rules, `ActiveModel::Model` validations for `Properties::SearchQuery`, model scopes for each filter, and `config_for(:pagination)`. The admin UI (Milestone 8) starts only once Milestones 1–7 are done.
 - [ ] **Keyset limits.** You can't jump to page N, price sorts leave out withheld prices, and in a price sort a listing whose price changes mid-scroll can appear twice or be missed (the client de-duplicates by `id`, so a repeat never shows as two cards). All are fine for an infinite feed; note them in the README.

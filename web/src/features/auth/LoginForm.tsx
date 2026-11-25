@@ -1,29 +1,32 @@
 import { Link } from '@tanstack/react-router'
 import type { FormEvent } from 'react'
+import { useToast } from '@/components/ui/toast'
 import { authErrorMessage } from './errorMessage'
 import { FormField } from './FormField'
 import { useLogin } from './useAuthMutations'
 
 export function LoginForm({ next, onSuccess }: { next?: string; onSuccess: () => void }) {
+  const toast = useToast()
   const loginMutation = useLogin()
-  const message = authErrorMessage(loginMutation.error)
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
     loginMutation.mutate(
       { email: String(form.get('email')), password: String(form.get('password')) },
-      { onSuccess },
+      {
+        onSuccess,
+        // Errors about the whole form are toasts; field errors (422) stay inline.
+        onError: (err) => {
+          const message = authErrorMessage(err)
+          if (message) toast(message, 'error')
+        },
+      },
     )
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      {message && (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          {message}
-        </p>
-      )}
       <FormField label="Email" name="email" type="email" autoComplete="email" required />
       <FormField label="Password" name="password" type="password" autoComplete="current-password" required />
       <button

@@ -1,6 +1,6 @@
 import { ApiError } from '@/lib/api'
 
-/** Form-level message for an auth mutation error (field errors are shown inline). */
+/** Toast for an auth mutation error, or null for a 422 (its field errors show inline). */
 export function authErrorMessage(error: Error | null): string | null {
   if (!error) return null
   if (error instanceof ApiError) {
