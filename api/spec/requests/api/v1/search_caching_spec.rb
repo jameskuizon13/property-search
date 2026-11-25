@@ -28,66 +28,27 @@ RSpec.describe "Search caching", type: :request do
     sql
   end
 
+  # Rails' own Rack::ETag hashes the rendered body, so a 304 means the body
+  # is byte-for-byte the same; there is no ETag of our own to keep in step.
   describe "ETag" do
-    it "answers 304 without running the search when nothing changed" do
+    it "answers 304 when the body hasn't changed" do
       etag = search
-      expect(etag).to start_with("W/")
       expect(response.headers["Cache-Control"]).to include("private")
 
-      sql = queries { search(etag:) }
+      search(etag:)
 
       expect(response).to have_http_status(:not_modified)
       expect(response.body).to be_empty
-      expect(sql.grep(/FROM "properties"/)).to be_empty
     end
 
-    it "changes when a property changes" do
-      etag = search
-      property.update!(bedrooms: 5)
-      search(etag:)
-      expect(response).to have_http_status(:ok)
-    end
-
-    it "changes when a property is created or deleted" do
-      etag = search
-      create(:property)
-      expect(search).not_to eq(etag)
-
-      etag = search
-      property.destroy!
-      expect(search).not_to eq(etag)
-    end
-
-    it "varies by user, even with empty watchlists, and on sign-in" do
-      anonymous = search
-      first = search(as: user)
-      second = search(as: create(:user))
-      expect([ anonymous, first, second ].uniq.size).to eq(3)
-    end
-
-    it "changes when the user watches or unwatches anything" do
+    it "answers 200 with the new body when anything in it changed" do
       etag = search(as: user)
-      item = create(:watchlist_item, user:, property:)
-      watched = search(as: user)
-      expect(watched).not_to eq(etag)
+      create(:watchlist_item, user:, property:)
 
-      item.destroy!
-      create(:watchlist_item, user:, property: create(:property))
-      expect(search(as: user)).not_to eq(watched)
-    end
+      search(etag:, as: user)
 
-    it "differs between filters, sorts, cursors and limits" do
-      etags = [
-        search, search(minBedrooms: 3), search(sort: "price_asc"), search(limit: 1),
-        search(cursor: JSON.parse(response.body)["meta"]["nextCursor"], limit: 1)
-      ]
-      expect(etags.uniq.size).to eq(etags.size)
-    end
-
-    it "is shared by equivalent requests" do
-      expect(search(propertyTypes: %w[villa house])).to eq(search(propertyTypes: %w[house villa]))
-      expect(search(q: "f")).to eq(search)
-      expect(search(limit: 20)).to eq(search)
+      expect(response).to have_http_status(:ok)
+      expect(json[:data].find { |row| row[:id] == property.id }[:watched]).to be(true)
     end
 
     it "never answers 304 to an invalid request" do

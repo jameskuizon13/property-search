@@ -83,13 +83,6 @@ module Properties
       scope
     end
 
-    # Every parsed value a response depends on, after defaults and
-    # normalisation, so equivalent URLs (reordered types, a 1-letter q that is
-    # ignored, an explicit default limit) share one ETag. Call after validate!.
-    def cache_key_parts
-      count_key_parts.merge(sort:, cursor:, limit:)
-    end
-
     # COUNT(*) of the filtered rows, cached for 60 s per filter set and search
     # cache version. Not keyed by cursor, limit or user: none of them change it.
     def total_count

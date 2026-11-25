@@ -10,7 +10,7 @@ RSpec.describe SearchCache do
     expect { described_class.bump! }.to(change { described_class.version })
   end
 
-  it "expires the version, so a lost bump can't keep old ETags alive" do
+  it "expires the version" do
     version = described_class.version
     travel(described_class::TTL + 1.second)
     expect(described_class.version).not_to eq(version)

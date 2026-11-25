@@ -354,8 +354,8 @@ The bonus items are cheap to add when planned in from the start, so the skeleton
 | Area | Decision |
 | --- | --- |
 | Rate limiting | rack-attack only. Milestone 1: the scaffold's `auth/ip` (10/min per IP on `POST /api/v1/auth*`) and `api/ip` (300 per 5 min) throttles, given their own store. Milestone 7 bonus: `GET /properties` (120/min per IP) and watchlist writes (60/min per user). Over the limit returns the scaffold's 429 JSON body (shared error shape) with `Retry-After`. |
-| HTTP caching | Weak `ETag` + `Cache-Control: private, max-age=0, must-revalidate` on search via `stale?`, computed **before** the query from the search cache version, the user, their watchlist (`COUNT` + `MAX(id)`), the normalised params and the deploy revision, so a 304 skips the search. `GET /property_types` is `public, max-age=3600`. |
-| App caching | Redis `Rails.cache` for search `COUNT`s (60 s). Every property create/update/delete bumps a `search_cache_version` key (15-minute expiry), which clears all cached counts and changes every search ETag at once. The property-type list is a Ruby constant, so it is HTTP-cached instead of copied into Redis. |
+| HTTP caching | Rails' default `Rack::ETag` (a hash of the rendered body) + `Cache-Control: private, max-age=0, must-revalidate` on search: a 304 saves the transfer, not the query, and can never serve a body from older code. No custom ETag, so there is no version to bump by hand. `GET /property_types` is `public, max-age=3600`. |
+| App caching | Redis `Rails.cache` for search `COUNT`s (60 s). Every property create/update/delete bumps a `search_cache_version` key (15-minute expiry), which clears all cached counts at once. The property-type list is a Ruby constant, so it is HTTP-cached instead of copied into Redis. |
 | Security | bcrypt via `has_secure_password`; strong params; `rack-cors` limited to the web origin; JWT in an `HttpOnly` cookie (see Security hardening); no secrets in the repo (`.env.example`). |
 | Validation | Model validations + DB constraints (NOT NULL, CHECK, unique) so bad data is blocked even outside Rails. |
 | Deployment | `docker compose up` (or `make up`) starts `postgres:17`, `redis:7`, `api` (Rails, Puma) and `web` (Vite dev server), each waiting on healthchecks before `db:prepare`. `api/Dockerfile` is the production image Rails generates. A production `web` image (static build behind nginx) is listed under Milestone 9. 12-factor env config. |
@@ -492,7 +492,7 @@ Data has to exist before anything can be searched. For now it comes from a seed 
 
 **Milestone 7 — Performance & bonus (only from leftover buffer)**
 
-- Per-route rack-attack throttles added to the existing initializer (search, watchlist writes), cached `COUNT`s in Redis, ETag on search computed before the query, and `content-visibility` on cards instead of list virtualisation.
+- Per-route rack-attack throttles added to the existing initializer (search, watchlist writes), cached `COUNT`s in Redis, Rails' default body-hash ETag on search, and `content-visibility` on cards instead of list virtualisation.
 
 **Milestone 8 — Nice to have: admin UI for properties (~55 min, only if time is left after Milestones 1–7)**
 
