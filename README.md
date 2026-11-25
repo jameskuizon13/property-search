@@ -19,7 +19,7 @@ A label like _(Batch 6)_ means that part is planned but not built yet. The full 
 | `api/` | Rails 8.1 (API mode), Ruby 3.4, Puma, PostgreSQL 17, Redis 7, ActionCable, `jwt`, Alba, rack-cors, rack-attack, bullet, RSpec + FactoryBot + shoulda-matchers |
 | `web/` | Vite, React 19, TypeScript, TanStack Query, TanStack Router, zod, Jotai, `@rails/actioncable`, Tailwind 4, TanStack Virtual _(installed; used only if time allows, Batch 7)_, Vitest + React Testing Library + MSW, oxlint |
 
-Infra: Docker Compose (db, redis, api, web), a root `Makefile`, GitHub Actions CI (one job per app).
+Infra: Docker Compose (db, redis, api, web), a root `Makefile`, GitHub Actions CI (one job per app), husky + lint-staged git hooks.
 
 ## Getting started
 
@@ -103,7 +103,7 @@ with no `docker compose exec`.
    ```
 
 3. **Node 24 and pnpm.** Node ships with corepack, which installs the exact pnpm version pinned
-   in `web/package.json` (`packageManager`). If you later see `pnpm: command not found`, this step
+   in `package.json` and `web/package.json` (`packageManager`). If you later see `pnpm: command not found`, this step
    was skipped, often after switching Node with nvm (corepack shims are per Node version).
 
    ```bash
@@ -116,7 +116,8 @@ with no `docker compose exec`.
 **One-time setup:**
 
 ```bash
-make setup   # starts db + redis in Docker, bundle install, db:prepare + seed, pnpm install
+make setup   # starts db + redis in Docker, installs the git hooks, bundle install,
+             # db:prepare + seed, pnpm install
 ```
 
 **Start / stop:**
@@ -146,6 +147,32 @@ cd web && pnpm test:watch        # vitest in watch mode
 
 `make test` and `bundle exec rspec` need Postgres running, so run `make services` first.
 
+**Git hooks** (husky + lint-staged, installed by `make setup` or `pnpm install` at the repo root).
+Each hook checks only the packages your change touches, so a web-only commit never waits on rspec:
+
+| Hook | When `api/` changed | When `web/` changed |
+| --- | --- | --- |
+| pre-commit | `bin/rubocop` on the staged Ruby files, then the full `rspec` suite | `oxlint` on the staged TS/JS files, then the full `vitest` suite |
+| pre-push | `bin/rails zeitwerk:check` (eager-loads the app, as production does) | `pnpm build` (`tsc -b` + `vite build`) |
+
+- The pre-commit hook runs on exactly what you're committing: unstaged edits and untracked files are
+  set aside while it runs and put back afterwards, so a new file you forgot to `git add` fails the
+  tests. Deleting a file, or moving one out of a package, counts as a change to that package.
+- Don't edit files while it runs. If it ends with "Failed to restore unstaged changes", nothing is
+  lost: your edits are in the stash named "lint-staged automatic backup" (`git stash list`).
+- In a merge commit, lint-staged only checks files that differ from both parents, so merging
+  `main`'s api changes into a web-only branch doesn't run rspec. Run `make test` after such merges.
+- It runs the whole suite of a touched package, not only related tests, so a change that breaks a
+  caller elsewhere is caught. `rspec` needs Postgres: run `make services` first.
+- pre-push compares the pushed commits with what the remote already has (with `origin/main` for a
+  new branch) and builds the working tree, so commit or stash anything you aren't pushing.
+- Skip once with `git commit --no-verify` / `git push --no-verify`. The config is in
+  `lint-staged.config.mjs` and `.husky/`.
+- **GUI git clients** (Fork, Tower, VS Code) may not have your shell's `PATH`, so the hooks can't
+  find `pnpm`, `bundle` or rbenv's Ruby, or they pick up an older system Node (lint-staged needs
+  Node 22.22.1 or newer). Put the PATH setup (e.g. `eval "$(rbenv init -)"`) in
+  `~/.config/husky/init.sh`, which husky sources before every hook.
+
 **Run a single test:**
 
 ```bash
@@ -158,6 +185,8 @@ cd web && pnpm test -t "part of the test name"                  # by name
 **Troubleshooting:**
 
 - **`pnpm: command not found`:** run `corepack enable pnpm` (again after each new Node install via nvm).
+- **Commit blocked with `PG::ConnectionBad` / `connection refused`:** the pre-commit hook runs
+  rspec for any `api/` change, which needs Postgres: `make services`, then commit again.
 - **`rbenv: version '3.4.13' is not installed`, or the wrong Ruby:** `rbenv install 3.4.13`; check
   `rbenv init` is in your shell profile and you're inside `api/`.
 - **Port already in use (5432/6379):** a local Postgres or Redis is running. Stop it
