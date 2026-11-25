@@ -1,4 +1,4 @@
-.PHONY: setup services dev api web test test-api test-web seed up down
+.PHONY: setup services dev api web test test-api test-web seed up down pgadmin
 
 ## First-time setup: start Postgres/Redis, install deps, create + seed DB
 setup: services
@@ -37,5 +37,10 @@ test-web:
 up:
 	docker compose up --build
 
+## Optional database GUI on http://localhost:5050 (see README)
+pgadmin:
+	docker compose --profile tools up -d --wait pgadmin
+	@echo "pgAdmin: http://localhost:5050  (login dev@example.com / pgadmin; Postgres password: postgres)"
+
 down:
-	docker compose down
+	docker compose --profile tools down

@@ -28,9 +28,15 @@ jobs:
         with:
           working-directory: api
           bundler-cache: true
-      - run: bin/rails db:prepare
+      # Schema only. db:prepare would also run db/seeds.rb on the new
+      # database (the seed skips itself in test, but load only what specs need).
+      - run: bin/rails db:create db:schema:load
       - run: bundle exec rspec
       - run: bin/rubocop
+      - name: Brakeman
+        run: bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error
+      - name: Bundler audit
+        run: bin/bundler-audit check --update
 
   web:
     runs-on: ubuntu-latest

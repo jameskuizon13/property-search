@@ -62,7 +62,7 @@ Rails.application.configure do
   # Docker Compose service name (the Vite proxy forwards to http://api:3000)
   config.hosts << "api"
 
-  config.action_cable.allowed_request_origins = [ ENV.fetch("FRONTEND_ORIGIN") { "http://localhost:5173" } ]
+  config.action_cable.allowed_request_origins = config.x.frontend_origins
 
   config.after_initialize do
     Bullet.enable = true

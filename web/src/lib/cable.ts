@@ -2,9 +2,12 @@ import { createConsumer, type Consumer } from '@rails/actioncable'
 
 let consumer: Consumer | null = null
 
-export function getConsumer(token: string): Consumer {
-  consumer?.disconnect()
-  consumer = createConsumer(`/cable?token=${encodeURIComponent(token)}`)
+/**
+ * The WebSocket handshake carries the same HttpOnly auth cookie as REST calls,
+ * so the URL holds no token.
+ */
+export function getConsumer(): Consumer {
+  consumer ??= createConsumer('/cable')
   return consumer
 }
 

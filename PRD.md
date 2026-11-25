@@ -154,7 +154,7 @@ flowchart LR
 
 The browser calls Rails over REST and gets watchlist updates back over one WebSocket. Postgres is the source of truth. Redis backs the cache, cable pub/sub and rate limits.
 
-In development, Vite proxies `/api` and `/cable` to Rails, so the browser sees one origin. Production assumes the web app and API sit on **same-site subdomains** (see Security hardening). CORS and cable origins still come from `FRONTEND_ORIGIN`, so moving from the proxy to subdomains needs no code change. Fully separate domains are a Batch 10 fallback.
+In development, Vite proxies `/api` and `/cable` to Rails, so the browser sees one origin. Production assumes the web app and API sit on **same-site subdomains** (see Security hardening). CORS and cable origins still come from `FRONTEND_ORIGIN`. The web app calls same-origin `/api/v1` and `/cable` paths, so moving to subdomains needs a reverse proxy in front of `app.` or a configurable API base URL. Fully separate domains are a Batch 10 fallback.
 
 ```
 property-search/
@@ -258,7 +258,7 @@ Both modes return the same `meta`: `limit`, `hasMore`, `nextCursor` (cursor mode
 }
 ```
 
-**Error shape:** `{ "error": { "code": "validation_failed", "message": "…", "details": { "max_price": ["must be ≥ min_price"] } } }`. One `rescue_from` layer in `Api::V1::BaseController` maps errors: `RecordNotFound` → 404, `ParameterMissing` → 400 `parameter_missing` (as the scaffold's `ApplicationController` already does), invalid values and `RecordInvalid` → 422 `validation_failed`, unauthenticated → 401, not an admin → 403, `StaleObjectError` → 409, throttled → 429 with `Retry-After`.
+**Error shape:** `{ "error": { "code": "validation_failed", "message": "…", "details": { "maxPrice": ["must be greater than or equal to minPrice"] } } }` (detail keys are camelCase like every other JSON key). One `rescue_from` layer in `Api::V1::BaseController` maps errors: `RecordNotFound` → 404, `ParameterMissing` → 400 `parameter_missing` (as the scaffold's `ApplicationController` already does), invalid values and `RecordInvalid` → 422 `validation_failed`, unauthenticated → 401, not an admin → 403, `StaleObjectError` → 409, throttled → 429 with `Retry-After`.
 
 **Avoiding N+1:** the property list is one query. `watched` comes from a single `LEFT JOIN watchlist_items … AND user_id = ?` selected as a boolean, not a lookup per row. The total count is a separate `COUNT` on the filtered base scope, before the `LEFT JOIN` and the custom `select(… AS watched)` are added (calling `.count` on the relation with that select breaks the SQL), cached for 60 s keyed by the normalised params. Serialisation uses Alba, a fast, plain-Ruby serializer.
 

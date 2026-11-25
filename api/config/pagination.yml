@@ -1,0 +1,5 @@
+# Paging defaults and caps for list endpoints. Override per environment with
+# PAGINATION_DEFAULT_LIMIT / PAGINATION_MAX_LIMIT, no code change needed.
+shared:
+  default_limit: <%= ENV.fetch("PAGINATION_DEFAULT_LIMIT", 20) %>
+  max_limit: <%= ENV.fetch("PAGINATION_MAX_LIMIT", 50) %>
