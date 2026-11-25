@@ -40,6 +40,19 @@ class Property < ApplicationRecord
 
   scope :active, -> { where(status: ACTIVE_STATUSES) }
 
+  # Price and status changes are what watchers get alerted on (Domain's
+  # Shortlist alerts). The event row is written inside the save's transaction,
+  # so the change and its history are saved together or not at all; watchers
+  # are told only after commit, so they never hear about a rolled-back change.
+  # In after-callbacks `price_cents_changed?` is already false, hence
+  # saved_change_to_*. `update_all`/`insert_all` skip all of this (the seed
+  # relies on that); every other write goes through update!. The commit
+  # callback sees only the last save's changes, so make one save per
+  # transaction (every caller does): a second save in the same transaction
+  # would log the first change but not broadcast it.
+  after_update :record_change_events, if: :price_or_status_changed?
+  after_update_commit :notify_watchers, if: :price_or_status_changed?
+
   normalizes :street_address, :suburb, :price_display, with: ->(value) { value.strip }
   normalizes :state, with: ->(value) { value.strip.upcase }
   normalizes :postcode, with: ->(value) { value.strip }
@@ -64,4 +77,21 @@ class Property < ApplicationRecord
 
   def price_withheld? = price_cents.nil?
   def active? = ACTIVE_STATUSES.include?(status)
+
+  private
+
+  def price_or_status_changed? = saved_change_to_price_cents? || saved_change_to_status?
+
+  def record_change_events
+    if saved_change_to_price_cents?
+      from, to = saved_change_to_price_cents
+      property_events.create!(kind: "price_changed", from_value: from&.to_s, to_value: to&.to_s)
+    end
+    if saved_change_to_status?
+      from, to = saved_change_to_status
+      property_events.create!(kind: "status_changed", from_value: from, to_value: to)
+    end
+  end
+
+  def notify_watchers = PropertyChangeNotifier.call(self)
 end

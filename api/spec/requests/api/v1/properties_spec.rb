@@ -35,14 +35,16 @@ RSpec.describe "GET /api/v1/properties", type: :request do
         postcode: "3065", latitude: -37.798, longitude: 144.978, priceCents: 85_000_000,
         priceDisplay: "$850,000", bedrooms: 3, bathrooms: 2, carSpaces: 1, landSizeSqm: 320,
         propertyType: "house", status: "for_sale", listedAt: "2026-11-01T00:00:00.000Z",
-        imageUrl: nil, watched: false
+        imageUrl: nil, version: 0, watched: false
       )
       expect(json[:meta]).to eq(limit: 20, hasMore: false, totalCount: 1)
     end
 
-    it "never exposes lock_version or timestamps" do
-      create(:property)
+    it "exposes lock_version only as version, and no timestamps" do
+      property = create(:property)
+      property.update!(bedrooms: 4)
       search
+      expect(json[:data].first[:version]).to eq(1)
       expect(json[:data].first.keys).not_to include(:lockVersion, :createdAt, :updatedAt)
     end
   end

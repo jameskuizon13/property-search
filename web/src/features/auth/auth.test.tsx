@@ -1,16 +1,16 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { apiFetch } from '@/lib/api'
 import { demoUser, signedIn, signedOut } from '@/test/authHandlers'
 import { renderApp } from '@/test/renderApp'
 import { server } from '@/test/server'
 import { makeProperty, page } from '@/test/propertyHandlers'
+import { fakeCable } from '@/test/cable'
 import { toasts } from '@/test/utils'
 
-const { disconnectConsumer } = vi.hoisted(() => ({ disconnectConsumer: vi.fn() }))
-vi.mock('@/lib/cable', () => ({ disconnectConsumer, getConsumer: vi.fn() }))
+const { disconnectConsumer } = fakeCable.module
 
 describe('protected routes', () => {
   it('redirects a signed-out user from /watchlist to /login with a return target', async () => {

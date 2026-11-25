@@ -153,4 +153,70 @@ RSpec.describe Property, type: :model do
     event.property.delete
     expect(PropertyEvent.exists?(event.id)).to be(false)
   end
+
+  describe "change events and notifications" do
+    let!(:property) { create(:property, price_cents: 85_000_000, price_display: "$850,000", status: "for_sale") }
+
+    before { allow(PropertyChangeNotifier).to receive(:call) }
+
+    def events = property.property_events.order(:id).pluck(:kind, :from_value, :to_value)
+
+    it "writes one price_changed row with the old and new cents" do
+      expect { property.update!(price_cents: 82_000_000, price_display: "$820,000") }
+        .to change(PropertyEvent, :count).by(1)
+      expect(events).to eq([ [ "price_changed", "85000000", "82000000" ] ])
+    end
+
+    it "records a withheld price as nil" do
+      property.update!(price_cents: nil, price_display: "Contact agent")
+      expect(events).to eq([ [ "price_changed", "85000000", nil ] ])
+    end
+
+    it "writes one status_changed row" do
+      property.update!(status: "sold")
+      expect(events).to eq([ %w[status_changed for_sale sold] ])
+    end
+
+    it "writes two rows when price and status change in one save" do
+      property.update!(price_cents: 80_000_000, status: "under_offer")
+      expect(events.map(&:first)).to contain_exactly("price_changed", "status_changed")
+    end
+
+    it "writes nothing and notifies no one when another column changes" do
+      expect { property.update!(bedrooms: 5, price_display: "Auction") }.not_to change(PropertyEvent, :count)
+      expect(PropertyChangeNotifier).not_to have_received(:call)
+    end
+
+    it "keeps neither the change nor an event when the save fails" do
+      expect { property.update(price_cents: 82_000_000, postcode: "abc") }.not_to change(PropertyEvent, :count)
+      expect(property.reload.price_cents).to eq(85_000_000)
+    end
+
+    it "rolls back the change when the event row can't be written" do
+      allow(property.property_events).to receive(:create!).and_raise(ActiveRecord::RecordInvalid)
+      expect { property.update!(status: "sold") }.to raise_error(ActiveRecord::RecordInvalid)
+      expect(property.reload.status).to eq("for_sale")
+    end
+
+    it "notifies watchers only after the transaction commits" do
+      Property.transaction do
+        property.update!(status: "sold")
+        expect(PropertyChangeNotifier).not_to have_received(:call)
+      end
+      expect(PropertyChangeNotifier).to have_received(:call).with(property).once
+    end
+
+    it "notifies no one when the transaction rolls back" do
+      Property.transaction do
+        property.update!(status: "sold")
+        raise ActiveRecord::Rollback
+      end
+      expect(PropertyChangeNotifier).not_to have_received(:call)
+      expect(PropertyEvent.count).to eq(0)
+    end
+
+    it "bumps lock_version (the API's version) on every save" do
+      expect { property.update!(status: "sold") }.to change { property.reload.lock_version }.by(1)
+    end
+  end
 end

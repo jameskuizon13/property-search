@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react'
+import { statusLabels } from '@/features/properties/format'
 import type { Property, PropertyStatus } from '@/features/properties/types'
 
-const statusBadges: Record<PropertyStatus, { label: string; className: string }> = {
-  for_sale: { label: 'For sale', className: 'bg-emerald-100 text-emerald-800' },
-  under_offer: { label: 'Under offer', className: 'bg-amber-100 text-amber-800' },
-  sold: { label: 'Sold', className: 'bg-slate-800 text-white' },
-  withdrawn: { label: 'Withdrawn', className: 'bg-slate-200 text-slate-700' },
+const statusBadgeClasses: Record<PropertyStatus, string> = {
+  for_sale: 'bg-emerald-100 text-emerald-800',
+  under_offer: 'bg-amber-100 text-amber-800',
+  sold: 'bg-slate-800 text-white',
+  withdrawn: 'bg-slate-200 text-slate-700',
 }
 
 function plural(count: number, word: string) {
@@ -20,7 +21,7 @@ type Props = {
 }
 
 export function PropertyCard({ property, typeLabel, action }: Props) {
-  const badge = statusBadges[property.status]
+  const badge = { label: statusLabels[property.status], className: statusBadgeClasses[property.status] }
   const headingId = `property-${property.id}-address`
   const features = [
     plural(property.bedrooms, 'bed'),

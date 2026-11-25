@@ -1,14 +1,12 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { delay, http } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { signedOut } from '@/test/authHandlers'
 import { scrollSentinelIntoView } from '@/test/intersectionObserver'
 import { makeProperties, makeProperty, page, serverError } from '@/test/propertyHandlers'
 import { renderApp } from '@/test/renderApp'
 import { server } from '@/test/server'
-
-vi.mock('@/lib/cable', () => ({ disconnectConsumer: vi.fn(), getConsumer: vi.fn() }))
 
 /** Records the query string of every search request. */
 function recordSearches(respond: (params: URLSearchParams) => Response | Promise<Response>) {

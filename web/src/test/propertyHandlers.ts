@@ -24,6 +24,7 @@ export function makeProperty(overrides: Partial<Property> = {}): Property {
     imageUrl: null,
     latitude: null,
     longitude: null,
+    version: 0,
     watched: false,
     ...overrides,
   }

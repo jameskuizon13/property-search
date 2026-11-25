@@ -81,7 +81,7 @@ RSpec.describe "Watchlist API", type: :request do
 
       expect(response).to have_http_status(:ok)
       row = json[:data].first
-      expect(row).to include(id: property.id, streetAddress: property.street_address, status: "for_sale", watched: true)
+      expect(row).to include(id: property.id, streetAddress: property.street_address, status: "for_sale", version: 0, watched: true)
       expect(row.keys).not_to include(:watchlistItemId, :watchedAt, :lockVersion)
       expect(json[:meta]).to eq(limit: 20, hasMore: false, totalCount: 1)
     end
@@ -203,7 +203,7 @@ RSpec.describe "Watchlist API", type: :request do
       put_watch(property.id)
 
       expect(response).to have_http_status(:created)
-      expect(json[:data]).to include(id: property.id, watched: true)
+      expect(json[:data]).to include(id: property.id, version: property.lock_version, watched: true)
       expect(user.watchlist_items.pluck(:property_id)).to eq([ property.id ])
     end
 
@@ -212,7 +212,7 @@ RSpec.describe "Watchlist API", type: :request do
       put_watch(property.id)
 
       expect(response).to have_http_status(:ok)
-      expect(json[:data]).to include(id: property.id, watched: true)
+      expect(json[:data]).to include(id: property.id, version: property.lock_version, watched: true)
       expect(WatchlistItem.where(user:, property:).count).to eq(1)
     end
 
