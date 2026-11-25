@@ -29,7 +29,7 @@ module Api
       # index, so two PUTs racing each other both succeed.
       def update
         property = Property.find(property_id)
-        item = current_user.watchlist_items.create_or_find_by!(property:)
+        item = watch(property)
         render json: { data: PropertyResource.new(property, params: { watched: true }).to_h },
                status: item.previously_new_record? ? :created : :ok
       end
@@ -43,8 +43,23 @@ module Api
 
       private
 
-      # Only plain positive integers that fit a bigint. Without this, "12abc"
-      # would be cast to 12 and act on another property.
+      # A DELETE can remove the row between create_or_find_by!'s failed insert
+      # and its fallback find (a fast unwatch/watch toggle). Inserting again
+      # then succeeds, so retry once instead of answering 404.
+      def watch(property)
+        attempts = 0
+        begin
+          attempts += 1
+          current_user.watchlist_items.create_or_find_by!(property:)
+        rescue ActiveRecord::RecordNotFound
+          retry if attempts < 2
+          raise
+        end
+      end
+
+      # Plain positive integers of up to 19 digits; Rails treats a value past
+      # the bigint max as not found. Without this check, "12abc" would be cast
+      # to 12 and act on another property.
       def property_id
         id = params[:property_id]
         raise ActiveRecord::RecordNotFound.new("Property not found", "Property") unless PROPERTY_ID.match?(id)

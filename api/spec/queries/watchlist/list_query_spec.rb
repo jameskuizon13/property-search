@@ -7,7 +7,7 @@ RSpec.describe Watchlist::ListQuery do
     WatchlistItem.create!(user:, property:, created_at: at)
   end
 
-  it "uses the (user_id, created_at, id) index for a later page" do
+  it "builds the keyset condition and order that the (user_id, created_at, id) index serves" do
     sql = described_class.new({ "cursor" => Watchlist::Cursor.encode(watched_at: Time.current, id: 1) }, user:)
                          .relation.to_sql
     expect(sql).to include(%("watchlist_items"."user_id" = #{user.id}))

@@ -216,10 +216,11 @@ RSpec.describe "Watchlist API", type: :request do
       expect(WatchlistItem.where(user:, property:).count).to eq(1)
     end
 
-    # create_or_find_by! inserts first, so an existing row is exactly what a
-    # concurrent PUT that won the race leaves behind: the unique index raises
-    # and the existing row is returned instead of a 500.
-    it "returns the existing row when the insert hits the unique index" do
+    # Simulates what a concurrent PUT that won the race leaves behind: the
+    # row already exists, so the insert hits the unique index and the
+    # existing row comes back instead of a 500. (Transactional tests can't run
+    # two real concurrent requests; Rails' create_or_find_by! does the rest.)
+    it "returns the existing row, unchanged, when the insert hits the unique index" do
       existing = watch(property, at: 1.day.ago)
       put_watch(property.id)
 
@@ -260,11 +261,28 @@ RSpec.describe "Watchlist API", type: :request do
     end
 
     it "returns 404 for an id that isn't a plain integer, instead of casting it" do
-      [ "#{property.id}abc", "-#{property.id}", "#{property.id}.0", "1e3", "99999999999999999999" ].each do |id|
+      ids = [ "#{property.id}abc", "-#{property.id}", "#{property.id}.0", "1e3",
+              "9999999999999999999", "99999999999999999999" ] # past the bigint max: 19 and 20 digits
+      ids.each do |id|
         put_watch(id)
         expect(response).to have_http_status(:not_found), "expected 404 for #{id.inspect}"
       end
       expect(WatchlistItem.count).to eq(0)
+    end
+
+    it "retries once when a DELETE removes the row between the failed insert and the find" do
+      raced = false
+      allow_any_instance_of(ActiveRecord::Associations::CollectionProxy)
+        .to receive(:create_or_find_by!).and_wrap_original do |original, *args, **kwargs|
+          next original.call(*args, **kwargs) if raced
+
+          raced = true
+          raise ActiveRecord::RecordNotFound.new("Couldn't find WatchlistItem", "WatchlistItem")
+        end
+
+      put_watch(property.id)
+      expect(response).to have_http_status(:created)
+      expect(WatchlistItem.where(user:, property:).count).to eq(1)
     end
 
     it "returns 404 when the property is deleted between the lookup and the insert" do
