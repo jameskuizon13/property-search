@@ -16,14 +16,14 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   /**
    * Return the 401 to the caller instead of running the global "signed out"
    * handler. Used by GET /me (a 401 just means "nobody is signed in") and by
-   * login (a 401 means "wrong password", shown inline).
+   * login (a 401 means "wrong password", shown as a toast).
    */
   allowUnauthorized?: boolean
 }
 
 let unauthorizedHandler: (() => void) | null = null
 
-/** Registers what happens when any request comes back 401 (clear caches, go to /login). */
+/** Registers what happens when any request comes back 401 (see useSessionEvents). */
 export function setUnauthorizedHandler(handler: (() => void) | null) {
   unauthorizedHandler = handler
 }

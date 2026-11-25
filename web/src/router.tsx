@@ -3,19 +3,17 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router'
 import { z } from 'zod'
 import { requireAuth } from '@/features/auth/requireAuth'
 import { safeNext } from '@/features/auth/safeNext'
-import { authKeys, meQueryOptions } from '@/features/auth/useMe'
-import { setUnauthorizedHandler } from '@/lib/api'
-import { disconnectConsumer } from '@/lib/cable'
+import { meQueryOptions } from '@/features/auth/useMe'
+import { parseSearchFilters } from '@/features/properties/searchSchema'
 import { LoginPage, SignupPage } from '@/routes/AuthPages'
 import { RootLayout } from '@/routes/RootLayout'
-import { SearchPage } from '@/routes/SearchPage'
-import { WatchlistPage } from '@/routes/WatchlistPage'
 
 export type RouterContext = { queryClient: QueryClient }
 
@@ -34,14 +32,20 @@ const indexRoute = createRoute({
 const searchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/search',
-  component: SearchPage,
+  // Filters live in the URL; see searchSchema.
+  validateSearch: parseSearchFilters,
+  // Code-split: each page loads on first visit (or on hover, via preload).
+  component: lazyRouteComponent(() => import('@/features/properties/SearchPage'), 'SearchPage'),
 })
 
 const watchlistRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/watchlist',
+  // Keep these two together on every protected route: the guard enforces it,
+  // and the flag tells logout to leave the page.
   beforeLoad: requireAuth,
-  component: WatchlistPage,
+  staticData: { requiresAuth: true },
+  component: lazyRouteComponent(() => import('@/features/watchlist/WatchlistPage'), 'WatchlistPage'),
 })
 
 const authSearch = z.object({ next: z.string().optional() })
@@ -70,28 +74,16 @@ const signupRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([indexRoute, searchRoute, watchlistRoute, loginRoute, signupRoute])
 
+// Sign-outs from outside this tab (a 401, another tab logging out) are
+// handled in RootLayout by useSessionEvents.
 export function createAppRouter(queryClient: QueryClient, history?: RouterHistory) {
-  const router = createRouter({
+  return createRouter({
     routeTree,
     context: { queryClient },
     history,
     defaultPreload: 'intent',
     scrollRestoration: true,
   })
-
-  // Any 401 outside /me and login means the cookie expired or was cleared:
-  // drop cached user data and send the user to sign in, then back here.
-  setUnauthorizedHandler(() => {
-    disconnectConsumer()
-    queryClient.clear()
-    queryClient.setQueryData(authKeys.me, null)
-    const { pathname, href } = router.state.location
-    if (pathname !== '/login' && pathname !== '/signup') {
-      void router.navigate({ to: '/login', search: { next: href } })
-    }
-  })
-
-  return router
 }
 
 export type AppRouter = ReturnType<typeof createAppRouter>
@@ -99,5 +91,9 @@ export type AppRouter = ReturnType<typeof createAppRouter>
 declare module '@tanstack/react-router' {
   interface Register {
     router: AppRouter
+  }
+  interface StaticDataRouteOption {
+    /** Set on routes guarded by requireAuth, so logout knows to leave them. */
+    requiresAuth?: boolean
   }
 }
