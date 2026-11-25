@@ -7,6 +7,14 @@
 #
 # Never in production unless asked: the demo accounts have a known password,
 # and bin/docker-entrypoint runs db:prepare, which seeds a fresh database.
+# Never in test: specs build their own data inside transactions, and seed
+# rows would leak into every count. (db:prepare seeds a freshly created
+# database, which is how this used to happen in CI.)
+if Rails.env.test?
+  puts "Skipping seed in the test environment."
+  return
+end
+
 if Rails.env.production? && ENV["SEED_DEMO_DATA"] != "1"
   puts "Skipping demo seed in production (set SEED_DEMO_DATA=1 to force)."
   return
