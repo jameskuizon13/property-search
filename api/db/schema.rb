@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_25_000005) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
@@ -78,6 +78,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_000005) do
     t.bigint "property_id", null: false
     t.datetime "created_at", null: false
     t.index ["property_id"], name: "index_watchlist_items_on_property_id"
+    t.index ["user_id", "created_at", "id"], name: "index_watchlist_items_on_user_id_created_at_id", order: { created_at: :desc, id: :desc }
     t.index ["user_id", "property_id"], name: "index_watchlist_items_on_user_id_and_property_id", unique: true
   end
 

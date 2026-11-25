@@ -14,10 +14,7 @@ module Api
         search_params = request.query_parameters.slice(*SEARCH_PARAMS)
         result = Properties::SearchQuery.new(search_params, user: current_user).call
 
-        render json: {
-          data: PropertyResource.new(result.records).serializable_hash,
-          meta: result.meta.transform_keys { |key| key.to_s.camelize(:lower) }
-        }
+        render_page PropertyResource.new(result.records), result.meta
       end
     end
   end

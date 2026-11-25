@@ -9,9 +9,9 @@ Rails.application.config.middleware.insert_before 0, Rack::Cors do
     resource "/api/*",
       headers: %w[Accept Content-Type],
       expose: %w[ETag Retry-After],
-      # Only the methods routes use today; PUT arrives with the watchlist
-      # (Batch 4) and PATCH with the admin screens (Batch 9).
-      methods: %i[get post delete options head],
+      # Only the methods routes use today; PATCH arrives with the admin
+      # screens (Batch 9).
+      methods: %i[get post put delete options head],
       credentials: true
   end
 end

@@ -10,6 +10,10 @@ Rails.application.routes.draw do
       get "me", to: "me#show"
       get "property_types", to: "property_types#index"
       resources :properties, only: :index
+      get "watchlist", to: "watchlist#index"
+      # format: false, or "/watchlist/12.0" would route as id 12, format "0".
+      put "watchlist/:property_id", to: "watchlist#update", format: false
+      delete "watchlist/:property_id", to: "watchlist#destroy", format: false
     end
   end
 end

@@ -12,6 +12,15 @@ module Api
 
       private
 
+      # A paged list in the shared envelope: { data: [...], meta: {...} },
+      # with meta keys camelCased like every other JSON key.
+      def render_page(resource, meta)
+        render json: {
+          data: resource.serializable_hash,
+          meta: meta.transform_keys { |key| key.to_s.camelize(:lower) }
+        }
+      end
+
       def current_user
         return @current_user if defined?(@current_user)
 

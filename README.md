@@ -5,7 +5,7 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Batches 1–3 are built** (auth and minimum security; property data and seeds; the search API). The work is split into numbered **batches** (build
+**Status: Batches 1–4 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API). The work is split into numbered **batches** (build
 steps, listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
 A label like _(Batch 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
@@ -207,12 +207,12 @@ Nothing needs copying: every value has a default in code that matches the Docker
 
 | Path | What |
 | ---- | ---- |
-| `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent`, `WatchlistItem` (table only; endpoints are Batch 4) |
+| `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent`, `WatchlistItem` |
 | `api/app/controllers` | API controllers under `/api/v1` |
 | `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
 | `api/app/channels` | ActionCable connection auth _(Batch 1)_; `WatchlistChannel` _(Batch 6)_ |
 | `api/app/services` | `AuthToken` (JWT issue/verify, cookie options) |
-| `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor` |
+| `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor`; `Watchlist::ListQuery` and `Watchlist::Cursor` (the user's watchlist, newest added first) |
 | `api/config/pagination.yml` | Default and maximum `limit` (`PAGINATION_DEFAULT_LIMIT`, `PAGINATION_MAX_LIMIT`) |
 | `api/app/resources` | Alba serializers |
 | `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `support/` |
@@ -304,6 +304,7 @@ list with its new badge until the next refetch, rather than vanishing under the 
 | Accounts | Password guessing, user enumeration on login | rack-attack 10/min per IP on `/auth/*`, keyed on the real peer (a spoofed `X-Forwarded-For` is ignored unless it comes from `TRUSTED_PROXIES`; ports in forwarded entries are stripped so one client keeps one bucket); `authenticate_by` (constant time) and one generic error | `rate_limit_spec.rb`, `client_ip_spec.rb`, `auth_spec.rb` |
 | Passwords | Leaked from the DB or logs | bcrypt; `password_digest` never serialised; `password`, `email`, `token`, `cursor` filtered from logs | `auth_spec.rb` (response keys), `filter_parameters_spec.rb` |
 | Errors | Stack traces or SQL in responses | One JSON error envelope everywhere: `rescue_from` in controllers, `JsonExceptionsApp` for unknown routes and 500s; non-string params, NUL bytes and malformed JSON are 400s, not crashes; Rails' `ip_spoofing_check` is off because it raised an empty 500 above the error handler (rate limits don't use `remote_ip`) | `errors_spec.rb`, `auth_spec.rb` |
+| Watchlists | Reading or changing another user's watchlist (IDOR) | Every query goes through `current_user.watchlist_items`; endpoints are keyed on the property, never a watchlist-item id; a `user_id` param is ignored; ids must be plain integers (`12abc` and `12.0` are 404s, not property 12) | `watchlist_spec.rb` |
 | Redirects | Open redirect via `?next=` | Only same-origin paths accepted; control characters and backslashes rejected (URL parsers strip or rewrite them); the normalised result is checked again, since dot segments like `/.//evil.example` normalise to `//evil.example` | `safeNext.test.ts`, `auth.test.tsx` |
 
 Known, accepted gaps (Batch 1):
@@ -333,6 +334,8 @@ Known, accepted gaps (Batch 1):
 - `q` is trimmed and ignored when shorter than 2 characters; `%` and `_` are matched literally. Every value is type-checked: a bad value (`minBedrooms=banana`, an array where one value is expected, an unknown type or sort, `limit` out of range, min > max, a forged cursor, or a cursor from another sort) returns 422 with every bad field listed at once, keyed by the same camelCase names the client sends (`details.maxPrice`), like every other JSON key. There are no required params, so search never returns 400. NUL bytes in any value are a 422, not a database error.
 - The cursor is signed (HMAC-SHA256, JSON payload, URL-safe) and records the sort it was issued for. Its values are type-checked as integers before they reach SQL.
 - `watched` comes from one `LEFT JOIN watchlist_items … AND user_id = ?`, selected as a boolean, so the page is one query; `totalCount` is a separate `COUNT` on the filtered scope, without the join. A spec checks the query count doesn't grow with the number of rows.
+- `GET /api/v1/watchlist` (`cursor`, `limit`) returns the user's watched properties, most recently added first, in the same shape and envelope as search (every row `watched: true`). It isn't limited to active listings. Its cursor is `[watchlist_items.created_at, id]` in microseconds, signed with its own key, so a search cursor is a 422 there. Another user's cursor only marks a position in your own list, so it leaks nothing.
+- `PUT /api/v1/watchlist/:propertyId` → 201 when added, 200 when already watched (both return the property). It uses `create_or_find_by!`: insert first, and on the unique index fall back to the existing row, so two racing PUTs both succeed instead of one getting a 500. Unknown property → 404. `DELETE /api/v1/watchlist/:propertyId` → 204 whether or not it was watched. All three need sign-in (401); the writes need the `Origin` check (403). If a DELETE lands between a PUT's failed insert and its lookup, the PUT retries once. Trade-off: each repeat PUT uses up a sequence value and logs a `duplicate key` line in Postgres.
 - Price sorts leave out listings with a withheld price ("Contact agent"), and the UI says so.
 - Honest limits: no jumping to page N, and in a price sort a listing whose price changes mid-scroll can appear twice (de-duplicated by `id` on the client) or be missed.
 
@@ -341,7 +344,8 @@ Known, accepted gaps (Batch 1):
 - Partial btree indexes (an index over only the rows matching a `WHERE`, so it stays small) `WHERE status IN ('for_sale', 'under_offer')`, matching the `Property.active` scope exactly: `(listed_at DESC, id DESC)` for newest, `(price_cents, id)` (also `price_cents IS NOT NULL`) for both price sorts, `(property_type, bedrooms)` for narrow filters.
 - Free-text `q`: GIN `gin_trgm_ops` on `suburb` and `street_address` (`ILIKE '%q%'`), plus a `text_pattern_ops` btree on `postcode` for prefix matching (`LIKE 'q%'`, so `30` finds `3065`).
 - **Extended statistics** on `(property_type, bedrooms)` (`CREATE STATISTICS … (mcv)`). See the villas case below for why. `schema.rb` can't record them, so the seed also creates them (`IF NOT EXISTS`) for databases loaded from `schema.rb`.
-- Every `properties` index appears in at least one plan below, so none was dropped. (`watchlist_items(property_id)` and the `property_events` index serve Batches 4 and 6.)
+- Every `properties` index appears in at least one plan below, so none was dropped. (`watchlist_items(property_id)` and the `property_events` index serve Batch 6.)
+- `watchlist_items (user_id, created_at DESC, id DESC)` serves `GET /watchlist`: an index scan with `Index Cond: user_id = … AND ROW(created_at, id) < ROW(…)` and no sort, then a primary-key lookup per row on `properties`. Checked by hand with 20k watchlist rows across 50 users (in a rolled-back transaction; the seed creates no watchlist rows, so there's no committed plan to reproduce). With only a few hundred rows Postgres prefers a sequential scan, which is fine at that size. The unique `(user_id, property_id)` index enforces one row per property and serves the `watched` join.
 
 #### EXPLAIN evidence
 
@@ -419,7 +423,7 @@ inside 4 hours. Batch 7 only uses leftover buffer. Batches 9–10 are nice-to-ha
 | 1  | Auth & minimum security | ~50 min | | [x] |
 | 2  | Property data & seeds | ~25 min | | [x] |
 | 3  | Search API | ~40 min | | [x] |
-| 4  | Watchlist API | ~15 min | | [ ] |
+| 4  | Watchlist API | ~15 min | | [x] |
 | 5  | Search & watchlist UI | ~50 min | | [ ] |
 | 6  | Real-time | ~25 min | | [ ] |
 | 7  | Performance & bonus | leftover buffer | | [ ] |
