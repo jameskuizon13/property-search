@@ -58,3 +58,7 @@ else
   elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
   puts format("Seeded %<inserted>d properties in %<elapsed>.1fs.", inserted:, elapsed:)
 end
+
+# Replant wipes properties, users and watchlists without callbacks, so cached
+# search counts and ETags must be invalidated by hand.
+SearchCache.bump!

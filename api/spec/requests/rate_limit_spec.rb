@@ -50,6 +50,107 @@ RSpec.describe "Rate limiting", type: :request do
     expect(response).to have_http_status(:too_many_requests)
   end
 
+  describe "search" do
+    # sort=bogus is a cheap 422: the throttle counts it like any search.
+    def search(headers = {}) = get("/api/v1/properties", params: { sort: "bogus" }, headers: json_headers.merge(headers))
+
+    it "throttles the 121st search in a minute from one IP" do
+      120.times { search }
+      expect(response).to have_http_status(:unprocessable_content)
+
+      search
+
+      expect(response).to have_http_status(:too_many_requests)
+      expect(response.headers["Retry-After"]).to eq("55")
+      expect(json).to eq(error: { code: "rate_limited", message: "Too many requests" })
+    end
+
+    it "counts HEAD requests and the .json suffix as searches" do
+      60.times { head("/api/v1/properties", params: { sort: "bogus" }, headers: json_headers) }
+      59.times { get("/api/v1/properties.json", params: { sort: "bogus" }, headers: json_headers) }
+      search
+      expect(response).to have_http_status(:unprocessable_content)
+      search
+      expect(response).to have_http_status(:too_many_requests)
+    end
+
+    it "keys searches by IP" do
+      120.times { search }
+      search("REMOTE_ADDR" => "198.51.100.7")
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+  end
+
+  describe "watchlist writes" do
+    let(:user) { create(:user) }
+    let(:other_user) { create(:user) }
+
+    def unwatch(as:) = delete("/api/v1/watchlist/1", headers: json_headers.merge(auth_cookie(as)))
+
+    def auth_cookie(user) = { "Cookie" => "#{AuthToken::COOKIE_NAME}=#{AuthToken.encode(user)}" }
+
+    it "throttles a user's 61st write in a minute, not another user on the same IP" do
+      60.times { unwatch(as: user) }
+      expect(response).to have_http_status(:no_content)
+
+      unwatch(as: user)
+      expect(response).to have_http_status(:too_many_requests)
+      expect(json[:error][:code]).to eq("rate_limited")
+
+      unwatch(as: other_user)
+      expect(response).to have_http_status(:no_content)
+    end
+
+    it "counts PUT and DELETE together" do
+      30.times { put("/api/v1/watchlist/0", headers: json_headers.merge(auth_cookie(user))) }
+      30.times { unwatch(as: user) }
+      unwatch(as: user)
+      expect(response).to have_http_status(:too_many_requests)
+    end
+
+    it "doesn't count reading the watchlist" do
+      70.times { get("/api/v1/watchlist", headers: json_headers.merge(auth_cookie(user))) }
+      unwatch(as: user)
+      expect(response).to have_http_status(:no_content)
+    end
+
+    it "doesn't key requests without a valid token by user" do
+      61.times { delete("/api/v1/watchlist/1", headers: json_headers.merge("Cookie" => "auth=garbage")) }
+      expect(response).to have_http_status(:unauthorized)
+    end
+  end
+
+  # Request specs can't send these paths as-is (the test client tidies the
+  # URL first), so these go through the whole app on raw Rack requests. The
+  # router sends every spelling to the same action, and rack-attack
+  # normalises the path the same way, so they all share one counter.
+  describe "path spellings the router treats as the same" do
+    def raw(method, path, cookie: nil)
+      env = Rack::MockRequest.env_for(path, method:, "REMOTE_ADDR" => "203.0.113.5",
+                                            "HTTP_ORIGIN" => frontend_origin, "HTTP_ACCEPT" => "application/json")
+      env["HTTP_COOKIE"] = cookie if cookie
+      Rails.application.call(env).first
+    end
+
+    it "counts every spelling of the search path against search/ip" do
+      paths = [ "/api/v1/properties", "/api/v1/properties/", "/api/v1//properties", "/api//v1/properties//",
+                "/api/v1/properties.json" ]
+      statuses = Array.new(120) { |n| raw("GET", paths[n % paths.size]) }
+      expect(statuses.uniq).to eq([ 200 ])
+
+      expect(paths.map { raw("GET", _1) }.uniq).to eq([ 429 ])
+    end
+
+    it "counts every spelling of a watchlist write against watchlist/user" do
+      cookie = "#{AuthToken::COOKIE_NAME}=#{AuthToken.encode(create(:user))}"
+      paths = [ "/api/v1/watchlist/0", "/api/v1/watchlist/0/", "/api/v1//watchlist//0" ]
+      statuses = Array.new(60) { |n| raw("DELETE", paths[n % paths.size], cookie:) }
+      expect(statuses).not_to include(429)
+
+      expect(paths.map { raw("DELETE", _1, cookie:) }.uniq).to eq([ 429 ])
+    end
+  end
+
   context "behind a trusted proxy" do
     before do
       allow(Rails.configuration.x).to receive(:trusted_proxies).and_return(ClientIp.parse("127.0.0.0/8"))

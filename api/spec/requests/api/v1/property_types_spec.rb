@@ -18,6 +18,11 @@ RSpec.describe "GET /api/v1/property_types", type: :request do
     ])
   end
 
+  it "lets browsers and proxies cache it for an hour" do
+    get "/api/v1/property_types", headers: json_headers
+    expect(response.headers["Cache-Control"]).to include("public", "max-age=3600")
+  end
+
   it "lists exactly the model's enum values (the CHECK is covered in the model spec)" do
     get "/api/v1/property_types", headers: json_headers
     expect(json[:data].pluck(:value)).to eq(Property.property_types.values)

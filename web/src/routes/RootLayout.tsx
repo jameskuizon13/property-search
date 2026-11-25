@@ -84,7 +84,7 @@ export function RootLayout() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-4 py-3">
+        <nav className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3">
           <div className="flex items-center gap-6">
             <Link to="/search" className="text-lg font-semibold text-slate-900">
               Property Search

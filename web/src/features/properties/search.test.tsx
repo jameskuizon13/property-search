@@ -4,7 +4,7 @@ import { delay, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { signedOut } from '@/test/authHandlers'
 import { scrollSentinelIntoView } from '@/test/intersectionObserver'
-import { makeProperties, makeProperty, page, serverError } from '@/test/propertyHandlers'
+import { makeProperties, makeProperty, page, rateLimited, serverError } from '@/test/propertyHandlers'
 import { renderApp } from '@/test/renderApp'
 import { server } from '@/test/server'
 
@@ -71,6 +71,31 @@ describe('search results', () => {
     await user.click(within(alert).getByRole('button', { name: 'Retry' }))
 
     await waitFor(() => expect(cards()).toHaveLength(2))
+  })
+
+  it('says when the search was rate limited, without retrying on its own', async () => {
+    let requests = 0
+    server.use(
+      signedOut(),
+      http.get('*/api/v1/properties', () => {
+        requests += 1
+        return rateLimited()
+      }),
+    )
+    renderApp('/search')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Too many requests in a short time')
+    expect(requests).toBe(1)
+  })
+
+  it('skips layout for off-screen cards rather than virtualising the list', async () => {
+    server.use(signedOut(), http.get('*/api/v1/properties', () => page(makeProperties(2), { totalCount: 2 })))
+    renderApp('/search')
+    await waitFor(() => expect(cards()).toHaveLength(2))
+    for (const item of screen.getByRole('region', { name: 'Search results' }).querySelectorAll('ul > li')) {
+      expect(item).toHaveClass('offscreen-skip')
+    }
   })
 
   it('notes that price sorts leave out withheld prices', async () => {
@@ -324,6 +349,24 @@ describe('infinite scroll', () => {
     await user.click(retry)
     await waitFor(() => expect(cards()).toHaveLength(25))
     expect(screen.getByText('End of results')).toHaveFocus()
+  })
+
+  it('says when a next batch was rate limited', async () => {
+    server.use(
+      signedOut(),
+      http.get('*/api/v1/properties', ({ request }) =>
+        new URL(request.url).searchParams.get('cursor')
+          ? rateLimited()
+          : page(makeProperties(20), { hasMore: true, nextCursor: 'c1', totalCount: 25 }),
+      ),
+    )
+    renderApp('/search')
+    await screen.findByText('25 properties')
+
+    scrollSentinelIntoView()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests in a short time')
+    expect(cards()).toHaveLength(20)
   })
 
   it('shows a repeated listing only once', async () => {

@@ -1,11 +1,14 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { ApiError } from '@/lib/api'
 import type { Page } from '@/lib/types'
 import { PropertyCardSkeleton, PropertyCardSkeletons } from './Skeleton'
 import { ErrorState } from './states'
 
 /** Start loading the next batch while the sentinel is still this far below the viewport. */
 export const PREFETCH_MARGIN = '600px'
+/** Not virtualised: off-screen cards skip layout and paint (see `offscreen-skip` in index.css). */
+const OFFSCREEN_SKIP = 'offscreen-skip'
 const FIRST_LOAD_SKELETONS = 6
 const NEXT_PAGE_SKELETONS = 3
 
@@ -43,7 +46,7 @@ function scrollToTop(focusTarget: HTMLElement | null | undefined) {
  * One list for search and the watchlist: cards from every loaded batch, a
  * sentinel that fetches the next batch before the user reaches the end, and a
  * visible "Load more" button for keyboard and screen-reader users. Not
- * virtualised (see README).
+ * virtualised (see OFFSCREEN_SKIP and the README).
  */
 export function InfiniteResults<T extends { id: number }>({
   query,
@@ -119,7 +122,7 @@ export function InfiniteResults<T extends { id: number }>({
     return (
       <>
         {status}
-        <div aria-hidden="true" className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div aria-hidden="true" className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           <PropertyCardSkeletons count={FIRST_LOAD_SKELETONS} />
         </div>
       </>
@@ -155,9 +158,11 @@ export function InfiniteResults<T extends { id: number }>({
             {totalCount.toLocaleString('en-AU')} {totalCount === 1 ? 'property' : 'properties'}
           </p>
         )}
-        <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="@container grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
-            <li key={item.id}>{renderItem(item)}</li>
+            <li key={item.id} className={OFFSCREEN_SKIP}>
+              {renderItem(item)}
+            </li>
           ))}
           {isFetchingNextPage &&
             Array.from({ length: NEXT_PAGE_SKELETONS }, (_, i) => (
@@ -170,7 +175,9 @@ export function InfiniteResults<T extends { id: number }>({
         <div className="mt-8 flex flex-col items-center gap-3 text-sm">
           {isFetchNextPageError && !isFetchingNextPage && (
             <p role="alert" className="text-red-800">
-              Couldn't load more properties.
+              {error instanceof ApiError && error.status === 429
+                ? 'Too many requests in a short time. Wait a moment, then retry.'
+                : "Couldn't load more properties."}
             </p>
           )}
           {hasNextPage ? (

@@ -16,7 +16,7 @@ We are building a small property search app. Users search Australian listings, f
 | State management | TanStack Query for server state, TanStack Router for URL state, Jotai for client state |
 | Query optimisation / N+1 | `watched` flag computed in one query; `bullet` raises on N+1 in the test suite |
 | Indexing strategy | Composite and partial indexes matched to the filter shape, checked with `EXPLAIN ANALYZE` in the README |
-| Frontend rendering | Memoised cards, stable callbacks, next batch requested before the user reaches the end; list virtualisation as an optional extra once the basics work |
+| Frontend rendering | Memoised cards, stable callbacks, next batch requested before the user reaches the end; off-screen cards skip layout and paint with `content-visibility` (chosen over list virtualisation in Milestone 7) |
 | Infinite scroll implementation | `useInfiniteQuery` + an IntersectionObserver sentinel and a “Load more” fallback over cursor (keyset) pagination (FR-3) |
 | Error handling, auth, testing | Central `rescue_from`, JWT in an `HttpOnly` cookie with a fixed 24-hour expiry, RSpec + Vitest/RTL on critical paths |
 | Bonus | Rate limiting, Redis caching, Docker Compose, real-time watchlist updates, saved searches if time allows |
@@ -101,7 +101,7 @@ Each requirement below has acceptance criteria a test can check.
 - The API uses keyset pagination with an opaque `nextCursor`. The end of the list is signalled by `hasMore: false`, which shows an “End of results” marker.
 - The header shows the total once (“1,284 properties”), taken from the first response.
 - While a batch loads, a row of skeleton cards appears at the bottom. If it fails, an inline “Retry” appears there without losing the results already loaded.
-- *(Optional, Milestone 7)* Virtualise the list with TanStack Virtual so the DOM stays small after hundreds of cards. Plain infinite scroll ships first; virtualisation is added only if time remains, because it changes how the next batch is triggered (see Frontend architecture).
+- *(Milestone 7)* Long lists stay cheap to render without virtualisation: each card has `content-visibility: auto` with a placeholder height matched to the real card, so off-screen cards skip layout and paint but stay in the DOM, in find-in-page and in the accessibility tree, and Back still lands on the same card. TanStack Virtual was considered and dropped (see the README for why).
 - Going back from a property keeps the loaded batches and scroll position (Query cache + router scroll restoration). A “Back to top” button appears once more than one batch is loaded and the page is scrolled past the first screen; it moves focus to the page heading.
 - Keyboard and screen-reader users get a visible “Load more” button as a fallback to the sentinel.
 
@@ -325,7 +325,7 @@ web/src/
     auth/         LoginForm, SignupForm, useMe, requireAuth, session (clearUserData, BroadcastChannel), useSessionEvents, requireAdmin (Milestone 8)
     admin/        (Milestone 8) AdminPropertiesPage (table + pager + filter), PropertyForm (create/edit), useAdminProperties, useSaveProperty, useDeleteProperty
   components/
-    ui/           PropertyCard, InfiniteResults (list + sentinel + Load more; virtualised in Milestone 7 if time allows), Skeleton, states (EmptyState, ErrorState), Toaster + toast atoms
+    ui/           PropertyCard, InfiniteResults (list + sentinel + Load more; `content-visibility` on cards), Skeleton, states (EmptyState, ErrorState), Toaster + toast atoms
   lib/            api.ts (fetch client), cable.ts (ActionCable consumer), queryClient.ts, query keys factory
   test/           Vitest setup, MSW server, render helpers
 ```
@@ -333,7 +333,7 @@ web/src/
 **Key behaviours**
 
 - `useSearchProperties(filters)` wraps `useInfiniteQuery` with `queryKey: propertyKeys.list(filters)` (`['properties', 'list', filters]`, the normalised filters), `initialPageParam: null`, `getNextPageParam: last => last.meta.hasMore ? last.meta.nextCursor : undefined`, and `staleTime: 30s`. `InfiniteResults` flattens `pages[]` and renders the cards. An IntersectionObserver on a sentinel element after the list calls `fetchNextPage` when `hasNextPage && !isFetchingNextPage`, which prevents double fetches. All loaded pages stay in the cache (no `maxPages`): dropping early pages would need backwards cursors and would break returning to the same scroll position.
-- *(Optional, Milestone 7)* If the list is virtualised with TanStack Virtual, off-screen rows aren't in the DOM, so the sentinel is replaced by a check on `getVirtualItems()`: when the last rendered item is within a few rows of the end, fetch the next page.
+- *(Milestone 7)* The list is not virtualised, so the sentinel keeps working as is; `content-visibility: auto` on each card does the rendering work instead.
 - `useToggleWatch` makes an optimistic `onMutate` patch across all property caches, rolls back in `onError` (to the last state the server confirmed, and only when no later click is queued), and marks the watchlist stale in `onSettled` without refetching it. Its mutations use ``scope: { id: `watch-${propertyId}` }``, so toggles for one property run one after another, in click order.
 - **Feedback uses toasts by default:** results of actions (sign in/up/out, form-wide errors, a failed watch), live updates and sign-outs. Two things stay inline: field errors, which must sit next to their input and stay visible while it's fixed, and failures that leave the page with nothing to show (search failing to load, with its Retry), because a toast would fade and leave no way to retry. Empty states are page content, not notifications. Watch clicks get no toast; the button changing is the feedback.
 - Query-key factory (`propertyKeys.list(params)`) keeps keys consistent across hooks, the cable hook and tests.
@@ -354,8 +354,8 @@ The bonus items are cheap to add when planned in from the start, so the skeleton
 | Area | Decision |
 | --- | --- |
 | Rate limiting | rack-attack only. Milestone 1: the scaffold's `auth/ip` (10/min per IP on `POST /api/v1/auth*`) and `api/ip` (300 per 5 min) throttles, given their own store. Milestone 7 bonus: `GET /properties` (120/min per IP) and watchlist writes (60/min per user). Over the limit returns the scaffold's 429 JSON body (shared error shape) with `Retry-After`. |
-| HTTP caching | Weak `ETag` + `Cache-Control: private, max-age=0, must-revalidate` on search via `stale?`. The ETag varies by user because the response includes `watched`. |
-| App caching | Redis `Rails.cache` for search `COUNT`s (60 s) and the property-type list. Property updates bump a `search_cache_version` key, which clears all cached counts at once. |
+| HTTP caching | Rails' default `Rack::ETag` (a hash of the rendered body) + `Cache-Control: private, max-age=0, must-revalidate` on search: a 304 saves the transfer, not the query, and can never serve a body from older code. No custom ETag, so there is no version to bump by hand. `GET /property_types` is `public, max-age=3600`. |
+| App caching | Redis `Rails.cache` for search `COUNT`s (60 s). Every property create/update/delete bumps a `search_cache_version` key (15-minute expiry), which clears all cached counts at once. The property-type list is a Ruby constant, so it is HTTP-cached instead of copied into Redis. |
 | Security | bcrypt via `has_secure_password`; strong params; `rack-cors` limited to the web origin; JWT in an `HttpOnly` cookie (see Security hardening); no secrets in the repo (`.env.example`). |
 | Validation | Model validations + DB constraints (NOT NULL, CHECK, unique) so bad data is blocked even outside Rails. |
 | Deployment | `docker compose up` (or `make up`) starts `postgres:17`, `redis:7`, `api` (Rails, Puma) and `web` (Vite dev server), each waiting on healthchecks before `db:prepare`. `api/Dockerfile` is the production image Rails generates. A production `web` image (static build behind nginx) is listed under Milestone 9. 12-factor env config. |
@@ -492,7 +492,7 @@ Data has to exist before anything can be searched. For now it comes from a seed 
 
 **Milestone 7 — Performance & bonus (only from leftover buffer)**
 
-- Per-route rack-attack throttles added to the existing initializer (search, watchlist writes), cached `COUNT`s in Redis, ETag on search, and (optional) list virtualisation.
+- Per-route rack-attack throttles added to the existing initializer (search, watchlist writes), cached `COUNT`s in Redis, Rails' default body-hash ETag on search, and `content-visibility` on cards instead of list virtualisation.
 
 **Milestone 8 — Nice to have: admin UI for properties (~55 min, only if time is left after Milestones 1–7)**
 

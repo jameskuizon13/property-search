@@ -55,3 +55,10 @@ export const defaultPropertyHandlers = [
 
 export const serverError = () =>
   HttpResponse.json({ error: { code: 'internal_error', message: 'Something went wrong' } }, { status: 500 })
+
+/** rack-attack's 429: the shared error shape plus Retry-After. */
+export const rateLimited = () =>
+  HttpResponse.json(
+    { error: { code: 'rate_limited', message: 'Too many requests' } },
+    { status: 429, headers: { 'Retry-After': '30' } },
+  )

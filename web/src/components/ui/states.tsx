@@ -13,6 +13,7 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
 /** For failures that leave the page with nothing to show, so it stays put (not a toast) with a Retry. */
 function errorHint(error: Error | null) {
   if (!(error instanceof ApiError)) return 'Check your connection and try again.'
+  if (error.status === 429) return 'Too many requests in a short time. Wait a moment, then retry.'
   if (error.status >= 500) return 'Something went wrong on our side. Please try again in a moment.'
   return 'Something about this request was not accepted. Try again, or start a new search.'
 }
