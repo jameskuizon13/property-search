@@ -3,7 +3,7 @@ import { useRouter } from '@tanstack/react-router'
 import { useToast } from '@/components/ui/toast'
 import { cancelListsHolding, findCachedProperty, patchCachedProperty } from '@/features/properties/cache'
 import { ApiError } from '@/lib/api'
-import { watchlistKeys } from '@/lib/queryKeys'
+import { propertyKeys, watchlistKeys } from '@/lib/queryKeys'
 import { unwatchProperty, watchProperty } from './api'
 
 /**
@@ -17,6 +17,9 @@ function confirmedStates(queryClient: QueryClient) {
   if (!states) confirmedByClient.set(queryClient, (states = new Map()))
   return states
 }
+
+/** Shared with WatchButton, which reads the state a click still in flight asked for. */
+export const watchMutationKey = (propertyId: number) => ['watch', propertyId] as const
 
 /**
  * Watch or unwatch one property. Each call says the state wanted (not
@@ -39,6 +42,7 @@ export function useToggleWatch(propertyId: number) {
   const clicksInFlight = () => queryClient.isMutating({ predicate: (m) => m.options.scope?.id === scopeId })
 
   return useMutation({
+    mutationKey: watchMutationKey(propertyId),
     scope: { id: scopeId },
     mutationFn: async (watch: boolean) => {
       await (watch ? watchProperty(propertyId) : unwatchProperty(propertyId))
@@ -47,6 +51,16 @@ export function useToggleWatch(propertyId: number) {
       if (clicksInFlight() === 1) {
         confirmed.set(propertyId, findCachedProperty(queryClient, propertyId)?.watched ?? !watch)
       }
+      // The property page may still be on its first load, showing the card as
+      // a placeholder (which this patch doesn't reach; WatchButton shows the
+      // click from the mutation itself). That load was sent before this click
+      // and would answer the old `watched`, so drop it; onSettled reloads the
+      // page once the server agrees.
+      await queryClient.cancelQueries({
+        queryKey: propertyKeys.detail(propertyId),
+        exact: true,
+        predicate: (query) => query.state.data === undefined,
+      })
       // A batch already loading copied the pages before this click and would
       // write them back over the patch, undoing it (see cancelListsHolding).
       const resume = await cancelListsHolding(queryClient, propertyId)
@@ -80,6 +94,9 @@ export function useToggleWatch(propertyId: number) {
       // page an unwatched card stays put (one click re-watches it) instead of
       // vanishing under the cursor. It refreshes on the next visit.
       void queryClient.invalidateQueries({ queryKey: watchlistKeys.all, refetchType: 'none' })
+      // An open property page reloads from the server, now that it agrees
+      // (and its first load, if onMutate cancelled it, finally runs).
+      void queryClient.invalidateQueries({ queryKey: propertyKeys.detail(propertyId), exact: true })
     },
   })
 }

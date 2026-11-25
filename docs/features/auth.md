@@ -57,7 +57,7 @@ elsewhere (a 401, or a logout in another tab).
   _Rejected:_ a token in `localStorage` (readable by XSS); Rails' encrypted session cookie (also
   fine, but no explicit claims and not what the brief names).
 - **2026-11-23: Fixed 24-hour expiry, no renewal.** Kept the first milestone small.
-  _Rejected for now:_ sliding renewal with a 14-day cap. Planned, see `.claude/plans/milestone-9-hardening.md`.
+  _Rejected for now:_ sliding renewal with a 14-day cap. Planned, see `.claude/plans/milestone-10-hardening.md`.
 - **2026-11-23: Nothing stored on the server.** No session table, so logout can't cut off a copied
   token; it stays valid until `exp`. Accepted trade-off. _Planned:_ a `sessions` table with
   revocation and "log out everywhere".
@@ -101,7 +101,7 @@ From the README's threat model, still true:
 - `app.` + `api.` subdomains need a reverse proxy or a configurable API base URL.
 
 Planned next: sliding renewal, sessions with revocation, per-email login throttling, breached
-passwords, 2FA (`.claude/plans/milestone-9-hardening.md`, PRD "Security hardening").
+passwords, 2FA (`.claude/plans/milestone-10-hardening.md`, PRD "Security hardening").
 
 ## How to check it
 

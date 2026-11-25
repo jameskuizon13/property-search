@@ -4,6 +4,7 @@ module Api
       include ActionController::Cookies
 
       SAFE_METHODS = %w[GET HEAD OPTIONS].freeze
+      PROPERTY_ID = /\A[1-9]\d{0,18}\z/
 
       # CSRF: the auth cookie is sent automatically, so every request that
       # changes data must come from the web app's origin. SameSite=Lax is the
@@ -39,6 +40,16 @@ module Api
       def sign_out
         cookies.delete(AuthToken::COOKIE_NAME, path: "/", same_site: :lax, secure: Rails.env.production?)
         @current_user = nil
+      end
+
+      # A property id from the URL: a plain positive integer of up to 19
+      # digits, else 404. Rails treats a value past the bigint max as not
+      # found. Without this check, "12abc" would be cast to 12 and act on (or
+      # show) another property.
+      def property_id(raw)
+        raise ActiveRecord::RecordNotFound.new("Property not found", "Property") unless PROPERTY_ID.match?(raw)
+
+        raw.to_i
       end
 
       def verify_origin!

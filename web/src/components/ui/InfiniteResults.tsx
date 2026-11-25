@@ -1,7 +1,9 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query'
+import { useLocation } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { ApiError } from '@/lib/api'
 import type { Page } from '@/lib/types'
+import { restoreReturnFocus } from './returnFocus'
 import { PropertyCardSkeleton, PropertyCardSkeletons } from './Skeleton'
 import { ErrorState } from './states'
 
@@ -59,6 +61,10 @@ export function InfiniteResults<T extends { id: number }>({
   const { data, error, isPending, isError, refetch, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } =
     query
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const focusRestored = useRef(false)
+  // This list's history entry: focus is restored only when the user comes back to it.
+  const historyEntry = useLocation({ select: (location) => location.state.__TSR_key })
   const endRef = useRef<HTMLParagraphElement>(null)
   // Set when "Load more" or "Retry" is pressed: if that batch was the last,
   // the button goes away, so focus moves to "End of results" instead of <body>.
@@ -79,6 +85,15 @@ export function InfiniteResults<T extends { id: number }>({
     }
     return out
   }, [data])
+
+  // Coming back from a property page: focus the card that was opened, once
+  // the cards are on screen (the router has already restored the scroll).
+  const hasItems = items.length > 0
+  useEffect(() => {
+    if (!hasItems || focusRestored.current) return
+    focusRestored.current = true
+    restoreReturnFocus(listRef.current, historyEntry)
+  }, [hasItems, historyEntry])
 
   const canAutoLoad = !!hasNextPage && !isFetchingNextPage && !isFetchNextPageError
 
@@ -158,7 +173,7 @@ export function InfiniteResults<T extends { id: number }>({
             {totalCount.toLocaleString('en-AU')} {totalCount === 1 ? 'property' : 'properties'}
           </p>
         )}
-        <ul className="@container grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <ul ref={listRef} className="@container grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
             <li key={item.id} className={OFFSCREEN_SKIP}>
               {renderItem(item)}

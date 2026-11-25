@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_26_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
@@ -35,6 +35,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
     t.integer "lock_version", default: 0, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.text "description"
     t.index ["listed_at", "id"], name: "index_properties_active_on_listed_at_id", order: :desc, where: "((status)::text = ANY ((ARRAY['for_sale'::character varying, 'under_offer'::character varying])::text[]))"
     t.index ["postcode"], name: "index_properties_on_postcode_pattern", opclass: :text_pattern_ops
     t.index ["price_cents", "id"], name: "index_properties_active_on_price_cents_id", where: "(((status)::text = ANY ((ARRAY['for_sale'::character varying, 'under_offer'::character varying])::text[])) AND (price_cents IS NOT NULL))"

@@ -11,7 +11,7 @@ import { useWatchlist } from './useWatchlist'
  */
 export function WatchlistPage() {
   const query = useWatchlist()
-  const renderItem = useRenderProperty()
+  const renderItem = useRenderProperty('watchlist')
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   return (

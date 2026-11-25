@@ -96,7 +96,7 @@ batch.
 ## Known gaps
 
 - No jumping to page N (keyset); offset paging for API clients is planned
-  (`.claude/plans/milestone-9-hardening.md`).
+  (`.claude/plans/milestone-10-hardening.md`).
 - A very common `q` that is rare among the newest listings could scan a lot of the feed index;
   never over 3 ms at 100k rows.
 - Filters have no mobile drawer; they wrap.

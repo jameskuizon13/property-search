@@ -1,10 +1,10 @@
-# Milestone 9 — Focused security hardening & extras: implementation plan
+# Milestone 10 — Focused security hardening & extras: implementation plan
 
-Branch: `feature/milestone-9-hardening`, stacked on Milestone 8's branch while those PRs are open.
+Branch: `feature/milestone-10-hardening`, stacked on Milestone 9's branch while those PRs are open.
 Scope chosen by the user (2026-11-25): sliding renewal + 14-day cap, a sessions table with
 revocation and `GET`/`DELETE /auth/sessions` (log out everywhere), a per-email login throttle,
-offset paging, lograge. Everything else in the PRD's Milestone 9 list stays documented as "next".
-Source: PRD Security hardening → "Milestone 9 — nice-to-have hardening", API design (sessions
+offset paging, lograge. Everything else in the PRD's Milestone 10 list stays documented as "next".
+Source: PRD Security hardening → "Milestone 10 — nice-to-have hardening", API design (sessions
 rows, offset paging), Observability row, README "What I'd do next" and auth known gaps.
 
 ## 1. Server-side sessions (revocation)
@@ -105,7 +105,7 @@ rows, offset paging), Observability row, README "What I'd do next" and auth know
 README: Auth section (sessions, renewal, cap, revocation; threat-model rows updated; known gaps
 updated — "open WebSocket outlives its token" now partly closed), Account page in UI notes, API
 offset paging, logging, per-email throttle in the throttle table, Build progress tick 9, "What I'd
-do next" trimmed to what's left. PRD: Milestone 9 list marks what was built.
+do next" trimmed to what's left. PRD: Milestone 10 list marks what was built.
 
 ## Changes after plan review (APPROVE WITH CHANGES; section 4 redesigned)
 

@@ -26,6 +26,20 @@ export type Property = {
   watched: boolean
 }
 
+/** One entry in a property's history. Prices are integer cents (null when withheld). */
+export type PropertyEvent =
+  | { id: number; kind: 'price_changed'; from: number | null; to: number | null; createdAt: string }
+  | { id: number; kind: 'status_changed'; from: PropertyStatus; to: PropertyStatus; createdAt: string }
+
+/** `GET /properties/:id`: the list shape plus what only the property page shows. */
+export type PropertyDetail = Property & {
+  description: string | null
+  /** The most recent price and status changes, newest first. Amounts are null while the price is withheld. */
+  history: PropertyEvent[]
+  /** False when older changes exist beyond `history`. */
+  historyComplete: boolean
+}
+
 /** What `WatchlistChannel` sends when a watched property's price or status changes. */
 export type PropertyUpdatedMessage = {
   type: 'property.updated'

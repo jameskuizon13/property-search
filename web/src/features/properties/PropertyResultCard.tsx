@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { PropertyCard } from '@/components/ui/PropertyCard'
+import { PropertyCard, type CardSource } from '@/components/ui/PropertyCard'
 import { WatchButton } from '@/features/watchlist/WatchButton'
 import type { Property } from './types'
 
@@ -10,9 +10,13 @@ import type { Property } from './types'
 export const PropertyResultCard = memo(function PropertyResultCard({
   property,
   typeLabel,
+  from,
 }: {
   property: Property
   typeLabel: string
+  from: CardSource
 }) {
-  return <PropertyCard property={property} typeLabel={typeLabel} action={<WatchButton property={property} />} />
+  return (
+    <PropertyCard property={property} typeLabel={typeLabel} from={from} action={<WatchButton property={property} />} />
+  )
 })

@@ -1,6 +1,8 @@
 # Builds realistic-looking Australian listings and bulk-inserts them with
 # insert_all, so 10k rows take a few seconds. insert_all skips callbacks on
-# purpose: seeding must not write property_events or broadcast anything.
+# purpose: seeding must not broadcast anything. The only property_events it
+# writes are its own, one per listing that is no longer for sale, so a sold
+# listing's history says when it sold.
 #
 # Deterministic: the same count, random seed and `now` give the same rows.
 # The seed passes the current time, so listing dates are relative to when it
@@ -32,11 +34,65 @@ class PropertyGenerator
   STREET_SUFFIXES = %w[St St St Rd Rd Ave Pde Cres Ct Dr Pl Tce Lane Way].freeze
   WITHHELD_DISPLAYS = [ "Contact agent", "Contact agent", "Auction", "Price on application" ].freeze
 
+  # Demo photos in web/public/images/properties (credits in CREDITS.md there),
+  # served by the web app, so image_url is a path on the web origin.
+  PHOTO_DIR = "/images/properties"
+  PHOTO_SETS = {
+    "house" => 8, "apartment" => 6, "townhouse" => 6, "units" => 2, "land" => 4, "rural" => 5
+  }.freeze
+  # type => the photo sets that suit it
+  TYPE_PHOTOS = {
+    "house" => %w[house], "apartment_unit" => %w[apartment], "townhouse" => %w[townhouse],
+    "villa" => %w[townhouse house], "land" => %w[land], "acreage" => %w[rural land], "rural" => %w[rural],
+    "block_of_units" => %w[units apartment], "retirement_living" => %w[apartment townhouse]
+  }.freeze
+
+  TYPE_NOUNS = {
+    "house" => "family home", "apartment_unit" => "apartment", "townhouse" => "townhouse", "villa" => "villa",
+    "land" => "block of land", "acreage" => "acreage property", "rural" => "rural holding",
+    "block_of_units" => "block of units", "retirement_living" => "retirement unit"
+  }.freeze
+  OPENERS = [
+    "Welcome to %<address>s, a %<adjective>s %<noun>s in the heart of %<suburb>s.",
+    "Set on a quiet street in %<suburb>s, this %<adjective>s %<noun>s is ready for its next owners.",
+    "Opportunity knocks in %<suburb>s with this %<adjective>s %<noun>s.",
+    "Positioned close to everything %<suburb>s has to offer, this %<adjective>s %<noun>s won't last."
+  ].freeze
+  ADJECTIVES = %w[light-filled well-kept spacious stylish charming renovated low-maintenance sun-drenched].freeze
+  # text => which listings it may describe, so a write-up never contradicts
+  # the facts beside it (an ensuite needs two bathrooms, a yard needs land).
+  HIGHLIGHTS = {
+    "An open-plan kitchen and living area flows out to a covered alfresco area." => ->(_) { true },
+    "The kitchen has stone benchtops, a gas cooktop and plenty of storage." => ->(_) { true },
+    "Ducted air conditioning keeps it comfortable all year round." => ->(_) { true },
+    "Polished timber floors and high ceilings run throughout." => ->(_) { true },
+    "The main bedroom has built-in robes and its own ensuite." => ->(rooms) { rooms[:bathrooms] >= 2 },
+    "Every bedroom has built-in robes." => ->(rooms) { rooms[:bedrooms] >= 2 },
+    "A low-maintenance backyard is ready for weekend barbecues." => ->(rooms) { rooms[:land_size_sqm].to_i >= 200 },
+    "Solar panels keep the power bills down." => ->(_) { true },
+    "Large windows bring in the northern light." => ->(_) { true }
+  }.freeze
+  LAND_HIGHLIGHTS = [
+    "A level, cleared block that is ready to build on.",
+    "Water, power and sewer are available at the boundary.",
+    "Room for a family home, a shed and a big garden.",
+    "Gentle rural views from across the block."
+  ].freeze
+  CLOSERS = [
+    "Walk to local cafes, schools and parks, with public transport close by.",
+    "Shops, schools and transport are all a short drive away.",
+    "Inspection is highly recommended.",
+    "Contact the agent to arrange a private inspection."
+  ].freeze
+
   attr_reader :count
 
   def initialize(count:, random_seed: 42, now: Time.current)
     @count = count
     @rng = Random.new(random_seed)
+    # Photos and write-ups draw from their own stream, so adding them didn't
+    # change any of the other generated values.
+    @text_rng = Random.new(random_seed + 1)
     @now = now
     @suburbs = load_suburbs
     @type_picker = TYPES.flat_map { |type, (weight, _)| [ type ] * weight }
@@ -46,7 +102,11 @@ class PropertyGenerator
   def call
     count.times.each_slice(BATCH_SIZE).sum do |indexes|
       rows = indexes.map { |i| build_row(i) }
-      Property.insert_all!(rows)
+      inserted = Property.insert_all!(rows, returning: %w[id status listed_at])
+      # Sorted, so the random stream is used in the same order however
+      # Postgres returns the rows.
+      events = inserted.rows.sort_by(&:first).filter_map { |id, status, listed_at| status_event(id, status, listed_at) }
+      PropertyEvent.insert_all!(events) if events.any?
       rows.size
     end
   end
@@ -60,9 +120,10 @@ class PropertyGenerator
     type = @type_picker.sample(random: rng)
     rooms = rooms_for(type)
     price_cents = withheld? ? nil : price_for(suburb["state"], type, rooms[:bedrooms])
+    address = street_address(type)
 
     {
-      street_address: street_address(type),
+      street_address: address,
       suburb: suburb["suburb"],
       state: suburb["state"],
       postcode: suburb["postcode"],
@@ -73,8 +134,33 @@ class PropertyGenerator
       property_type: type,
       status: status,
       listed_at: listed_at(index),
+      image_url: photo_for(type),
+      description: description_for(type, address, suburb["suburb"], rooms),
       **rooms
     }
+  end
+
+  # A listing under offer, sold or withdrawn went there from for sale some
+  # days after it was listed (never in the future).
+  def status_event(property_id, status, listed_at)
+    return if status == "for_sale"
+
+    changed_at = [ listed_at + @text_rng.rand(1.0..30.0).days, @now ].min
+    { property_id:, kind: "status_changed", from_value: "for_sale", to_value: status, created_at: changed_at }
+  end
+
+  def photo_for(type)
+    set = TYPE_PHOTOS.fetch(type).sample(random: @text_rng)
+    format("%s/%s-%02d.webp", PHOTO_DIR, set, @text_rng.rand(1..PHOTO_SETS.fetch(set)))
+  end
+
+  # Three short paragraphs, like an agent's write-up.
+  def description_for(type, address, suburb, rooms)
+    opener = format(OPENERS.sample(random: @text_rng), address:, suburb:, noun: TYPE_NOUNS.fetch(type),
+                                                        adjective: ADJECTIVES.sample(random: @text_rng))
+    candidates = type == "land" ? LAND_HIGHLIGHTS : HIGHLIGHTS.select { |_, fits| fits.call(rooms) }.keys
+    highlights = candidates.sample(2, random: @text_rng).join(" ")
+    [ opener, highlights, CLOSERS.sample(random: @text_rng) ].join("\n\n")
   end
 
   # ~10% withheld, so "Exclude price withheld" and price sorts have something to hide.

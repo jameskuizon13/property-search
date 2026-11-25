@@ -20,7 +20,7 @@ updates").
 | `api/app/resources/property_resource.rb` | The property shape, including `version` (`lock_version`) |
 | `api/lib/tasks/demo.rake` | `demo:watched`, `demo:change_property[id,price=…\|status=…]`, `demo:simulate_changes` |
 | `web/src/features/watchlist/useWatchlistChannel.ts` | Subscribes while signed in (mounted once in `RootLayout`); applies updates, toasts, handles reconnects |
-| `web/src/features/properties/cache.ts` | `applyPropertyUpdate`, `cancelListsHolding`, `findCachedProperty` |
+| `web/src/features/properties/cache.ts` | `applyPropertyUpdate`, `cancelListsHolding`, `findCachedProperty`; each covers the open property page too |
 | `web/src/features/properties/format.ts` | `describeChanges`, `formatCompactPrice` for the toast |
 | `web/src/lib/cable.ts`, `cableStatus.ts` | The consumer; the status atom for the header dot |
 | `web/src/test/cable.ts` | The fake consumer used by the web tests |
@@ -38,6 +38,8 @@ A save that changes both price and status writes two event rows and sends one me
   per transaction (see [property-data.md](property-data.md)).
 - **The client applies an update only to cached cards with an older `version`,** checked per cached
   copy. A late or repeated message must never put an older price back.
+- **The property page updates too:** the same version check, then a refetch for its history (see
+  [property-detail.md](property-detail.md)). A reconnect refetches an open property page.
 - **The patch keeps the card's own `watched` flag.** A watch click still in flight decides that,
   not the broadcast.
 - **A broadcast failure never fails the save.** The change is committed; the error is reported and

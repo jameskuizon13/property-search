@@ -71,6 +71,7 @@ class Property < ApplicationRecord
   validates :latitude, numericality: { in: -90..90 }, allow_nil: true
   validates :longitude, numericality: { in: -180..180 }, allow_nil: true
   validates :listed_at, presence: true
+  validates :description, length: { maximum: 5_000 }
 
   # "$850,000" from 85_000_000 cents.
   def self.format_price(cents)

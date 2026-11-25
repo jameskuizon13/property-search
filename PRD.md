@@ -32,7 +32,7 @@ The stack is a Rails 8.1 API with PostgreSQL 17 and ActionCable, plus a Vite Rea
 | Database | PostgreSQL 17, `pg_trgm` extension | Required; trigram indexes make free-text search fast |
 | Pagination | Cursor (keyset) pagination, infinite scroll | Infinite scroll is on the rubric; keyset stays fast at any depth, and newly added listings never shift the rows already loaded. One honest limit: in a price sort, a listing whose price changes mid-scroll can show up twice or be missed (see Risks) |
 | Serialisation | Alba, `lower_camel` keys | Light, plain Ruby, camelCase JSON for React |
-| Auth | One JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production), fixed 24-hour `exp` (sliding renewal is Milestone 9) | The brief allows JWT or sessions. A JWT needs no server-side session store, and the `HttpOnly` cookie keeps it out of reach of JavaScript, so an XSS bug can't steal it. One token covers REST and the WebSocket. Assumes web and API on the same site (e.g. `app.` and `api.` subdomains). Milestone 1 is the minimum secure baseline; extra hardening is Milestone 9. Full design under Security hardening. |
+| Auth | One JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production), fixed 24-hour `exp` (sliding renewal is Milestone 10) | The brief allows JWT or sessions. A JWT needs no server-side session store, and the `HttpOnly` cookie keeps it out of reach of JavaScript, so an XSS bug can't steal it. One token covers REST and the WebSocket. Assumes web and API on the same site (e.g. `app.` and `api.` subdomains). Milestone 1 is the minimum secure baseline; extra hardening is Milestone 10. Full design under Security hardening. |
 | Real-time | ActionCable, Redis adapter | Required |
 | Jobs | None for now: change broadcasts run inline after commit | Fan-out is small (a Redis publish per watcher, about 1 ms each), so a job adds moving parts without benefit, and inline sends also work from rake tasks and the console. At scale, move `PropertyChangeNotifier` into a Solid Queue job with retries; noted in the README |
 | Rate limit / cache | rack-attack for every throttle: the scaffold's `auth/ip` and `api/ip` rules (Milestone 1 gives them their own store), per-route rules in Milestone 7; Redis cache store for app caching | rack-attack is already scaffolded and already returns the shared JSON error shape, so auth needs no second limiter; caching is bonus and needs a shared store |
@@ -67,13 +67,14 @@ The must-haves are the challenge's functional list plus auth and live watchlist 
 4. As a user, I can add a property to my watchlist or remove it from any card, and the change shows straight away.
 5. As a user, I see my watchlist on its own page.
 6. As a user, when a watched property changes price or status (for example, sold), my screen updates and a toast tells me, with no refresh.
-7. *(Nice to have, Milestone 8)* As an admin, I can list, create, edit and delete properties in a simple admin screen, so I can add data and change prices or statuses visually. When I change a watched property, its watchers see the live update.
+7. *(Milestone 8, added after manual QA)* As someone looking for a home, I see a photo of every listing, and I can open any card to see the property's own page: a large photo, the description, every detail, its price and status history, where it is, and the watch toggle.
+8. *(Nice to have, Milestone 9)* As an admin, I can list, create, edit and delete properties in a simple admin screen, so I can add data and change prices or statuses visually. When I change a watched property, its watchers see the live update.
 
-**In scope (must):** stories 1–6, loading, empty and error states, seed data, Docker Compose, README.
+**In scope (must):** stories 1–7, loading, empty and error states, seed data, Docker Compose, README.
 
-**Bonus, in order:** rate limiting (rack-attack) → admin UI for properties (story 7) → HTTP caching with ETag and a Redis cache for counts → saved searches → location search by radius.
+**Bonus, in order:** rate limiting (rack-attack) → admin UI for properties (story 8) → HTTP caching with ETag and a Redis cache for counts → saved searches → location search by radius.
 
-**Out of scope:** maps, images beyond a placeholder URL, image uploads, bulk import, user management in the admin, email alerts, password reset, mobile app.
+**Out of scope:** embedded maps (the property page links out to Google Maps), more than one photo per listing, image uploads, agent details and enquiry forms, bulk import, user management in the admin, email alerts, password reset, mobile app.
 
 ## Functional requirements
 
@@ -82,7 +83,7 @@ Each requirement below has acceptance criteria a test can check.
 **FR-1 Search & results**
 
 - Free-text `q` matches suburb or street (case-insensitive, partial match) or the start of a postcode (`30` finds `3065`). `q` shorter than 2 characters (after trimming) is ignored, so typing one letter doesn't error or fire a full-table match.
-- Results show as cards: price display, address, suburb/state/postcode, beds/baths/cars, land size (m²), property type, status badge, and a watch toggle.
+- Results show as cards: photo, price display, address, suburb/state/postcode, beds/baths/cars, land size (m²), property type, status badge, and a watch toggle. *(Milestone 8)* The whole card opens the property page; the watch toggle still only toggles.
 - Default sort is newest listed. Other sorts: price low→high and high→low. Price sorts leave out listings with no numeric price (“Contact agent”), and the UI notes that price sorts hide withheld prices.
 - Loading shows skeleton cards. An empty result explains which filters to loosen. An error shows a retry button.
 
@@ -94,6 +95,15 @@ Each requirement below has acceptance criteria a test can check.
 - Status: search always returns active listings, meaning **for sale and under offer**; there is no `status` param. An “Exclude under offer” toggle narrows that to for sale only. Sold and withdrawn listings never appear in search.
 - An “Exclude price withheld” toggle hides listings with no numeric price.
 - Changing a filter starts a fresh result set from the top (new query key, no cursor). Free-text input is debounced by 300 ms.
+
+**FR-1a Property page (Milestone 8)**
+
+- `/properties/:id` shows a large photo, status badge, price, address, beds/baths/cars/land, property type, listed date, the description, the price and status history (newest first, then "Listed for sale"), the location with an "Open in Google Maps" link, and the watch toggle.
+- Opened from a card, it shows the card's details at once while the description and history load. Opened from a link, it shows a skeleton first.
+- An unknown id, or one that isn't a plain number, shows "We couldn't find this property" with a link to search; any other failure shows an error with a Retry.
+- "Back to results" returns to the same results and scroll position. Watching on the page shows on the cards, and a live update changes the page in place.
+- Any property opens, including sold and withdrawn ones, so a watched property that sold still has its page.
+- While a listing's price is withheld, its history shows no amounts ("Price updated"), so the page can't reveal a price the agent chose to hide.
 
 **FR-3 Infinite scroll**
 
@@ -115,7 +125,7 @@ Each requirement below has acceptance criteria a test can check.
 
 **FR-5 Auth**
 
-- Sign up, log in, log out, and `GET /me`. Email is unique and case-insensitive (stored trimmed and lowercased). Password is 12–72 characters (72 is bcrypt's byte limit). Rejecting breached passwords is a Milestone 9 item.
+- Sign up, log in, log out, and `GET /me`. Email is unique and case-insensitive (stored trimmed and lowercased). Password is 12–72 characters (72 is bcrypt's byte limit). Rejecting breached passwords is a Milestone 10 item.
 - Search is public. Watchlist endpoints and the cable connection require auth.
 - Errors about the whole form (wrong email or password, too many attempts, anything unexpected) show as toasts. Errors about one field (for example, a password that's too short) stay next to that input. Signing in, creating an account and signing out each confirm with a toast (“Signed in”, “Account created”, “Signed out”).
 - Logging out in one tab signs out every other open tab of the app in that browser straight away. Those tabs switch to the signed-out view (the header shows “Sign in”, Watch asks you to sign in) and show the toast “You were signed out in another tab”. A tab on a protected page (`/watchlist`) goes to `/login?next=…`; a tab on a public page stays where it is, because search doesn't need an account.
@@ -129,7 +139,7 @@ Each requirement below has acceptance criteria a test can check.
 - A card whose new status no longer matches the current filters (for example, it just sold) stays in the list with its new badge until the next refetch, instead of vanishing under the user's cursor. Noted in the README.
 - A rake task `demo:simulate_changes` changes random watched properties so reviewers can see it work. `demo:change_property[id,price=…|status=…]` changes one property on demand, and `demo:watched[email]` lists the ids a user watches so the README can point at a real one. Edits made in the admin screen trigger the same update.
 
-**FR-7 Admin property management (nice to have, Milestone 8)**
+**FR-7 Admin property management (nice to have, Milestone 9)**
 
 Until this is built, data comes from the seed script and the `demo:*` rake tasks.
 
@@ -159,7 +169,7 @@ flowchart LR
 
 The browser calls Rails over REST and gets watchlist updates back over one WebSocket. Postgres is the source of truth. Redis backs the cache, cable pub/sub and rate limits.
 
-In development, Vite proxies `/api` and `/cable` to Rails, so the browser sees one origin. Production assumes the web app and API sit on **same-site subdomains** (see Security hardening). CORS and cable origins still come from `FRONTEND_ORIGIN`. The web app calls same-origin `/api/v1` and `/cable` paths, so moving to subdomains needs a reverse proxy in front of `app.` or a configurable API base URL. Fully separate domains are a Milestone 9 fallback.
+In development, Vite proxies `/api` and `/cable` to Rails, so the browser sees one origin. Production assumes the web app and API sit on **same-site subdomains** (see Security hardening). CORS and cable origins still come from `FRONTEND_ORIGIN`. The web app calls same-origin `/api/v1` and `/cable` paths, so moving to subdomains needs a reverse proxy in front of `app.` or a configurable API base URL. Fully separate domains are a Milestone 10 fallback.
 
 ```
 property-search/
@@ -180,12 +190,12 @@ The schema has four tables. Every index maps to a real query, and each one is sh
 | Table | Key columns | Constraints |
 | --- | --- | --- |
 | `users` | `email` (string, stored lowercased via `normalizes`), `password_digest`, `name`, `role` (enum: user, admin; default user; added in Milestone 2 so the seed can create the admin) | unique `email`; CHECK on `role` |
-| `properties` | `street_address`, `suburb`, `state` (NSW…ACT), `postcode` (string, CHECK `^[0-9]{4}$`), `latitude`, `longitude`, `price_cents` (bigint, nullable), `price_display` (e.g. “Contact agent”), `bedrooms`, `bathrooms`, `car_spaces` (smallint), `land_size_sqm`, `property_type` (string), `status` (string: for\_sale, under\_offer, sold, withdrawn), `listed_at`, `image_url`, `lock_version` | NOT NULL + CHECK on the allowed string values and non-negative numbers |
+| `properties` | `street_address`, `suburb`, `state` (NSW…ACT), `postcode` (string, CHECK `^[0-9]{4}$`), `latitude`, `longitude`, `price_cents` (bigint, nullable), `price_display` (e.g. “Contact agent”), `bedrooms`, `bathrooms`, `car_spaces` (smallint), `land_size_sqm`, `property_type` (string), `status` (string: for\_sale, under\_offer, sold, withdrawn), `listed_at`, `image_url`, `description` (text, nullable; Milestone 8), `lock_version` | NOT NULL + CHECK on the allowed string values and non-negative numbers |
 | `watchlist_items` | `user_id`, `property_id`, `created_at` | FKs `on_delete: cascade`, unique (`user_id`, `property_id`) |
 | `property_events` | `property_id`, `kind` (price\_changed, status\_changed), `from_value`, `to_value`, `created_at` | FK; written in the same transaction as the change (`after_update`, not `after_commit`) |
 | `saved_searches` (bonus) | `user_id`, `name`, `params` (jsonb) | FK |
 
-Auth needs no extra table in Milestone 1: the JWT cookie is self-contained. A `sessions` table for revocation and device lists is a Milestone 9 item.
+Auth needs no extra table in Milestone 1: the JWT cookie is self-contained. A `sessions` table for revocation and device lists is a Milestone 10 item.
 
 We store `price_cents` and `price_display` separately because Australian listings often hide the price. Filters use the number, and the card shows the text. Listings with no price are left out when a price filter is set.
 
@@ -201,7 +211,7 @@ We store `price_cents` and `price_display` separately because Australian listing
 | GIN `gin_trgm_ops` on `suburb` and on `street_address`; btree `text_pattern_ops` on `postcode` | Free-text `q`: `suburb ILIKE '%q%' OR street_address ILIKE '%q%' OR postcode LIKE 'q%'` (a BitmapOr of the three). A plain btree can't serve `'%30%'`, so postcodes are prefix-matched. Trigrams only narrow from 3 characters, so a 2-character `q` mostly leans on the postcode prefix |
 | unique (`user_id`, `property_id`) on `watchlist_items` + btree (`property_id`) | Watch lookups, and finding watchers when a property changes |
 | btree (`property_id`, `created_at DESC`) on `property_events` | Change history for a property |
-| btree (`updated_at DESC`, `id DESC`) (Milestone 8) | Admin list, newest edits first |
+| btree (`updated_at DESC`, `id DESC`) (Milestone 9) | Admin list, newest edits first |
 
 Seed data uses about 10k properties by default (`SEED_COUNT` overrides it) across real suburb/postcode pairs from all 8 states and territories, built with Faker plus a small CSV of suburbs. It is generated with `insert_all` so seeding takes a few seconds. About 10% have a withheld price and about 15% are under offer, so every filter and toggle has something to show.
 
@@ -214,24 +224,24 @@ The API is versioned under `/api/v1`. It returns JSON and uses one success envel
 | `POST /auth/signup` | – | Create user → 201 with the user; sets the `HttpOnly` auth cookie |
 | `POST /auth/login` | – | Same response and cookie → 200 (401 on bad credentials, 429 when throttled) |
 | `DELETE /auth/logout` | yes | Clear the cookie, disconnect live sockets → 204 |
-| `GET /auth/sessions`, `DELETE /auth/sessions` | yes | List devices / log out everywhere (Milestone 9) |
+| `GET /auth/sessions`, `DELETE /auth/sessions` | yes | List devices / log out everywhere (Milestone 10) |
 | `GET /me` | yes | Current user, including `role` so the UI knows whether to show the admin link |
 | `GET /properties` | optional | Search, filter, sort, paginate |
-| `GET /properties/:id` | optional | Property detail + recent `property_events` |
+| `GET /properties/:id` | optional | *(Milestone 8)* The search shape plus `description` and `history` (the 20 most recent `property_events`, newest first); any status; 404 for an unknown or malformed id |
 | `GET /property_types` | – | Enum list so the UI never hard-codes it |
 | `GET /watchlist` | yes | Paginated watched properties |
 | `PUT /watchlist/:property_id` | yes | Watch, idempotent → 200/201 (`create_or_find_by!`, so two concurrent PUTs both succeed against the unique index) |
 | `DELETE /watchlist/:property_id` | yes | Unwatch, idempotent → 204 |
-| `GET /admin/properties` | admin (Milestone 8) | Paged list (`page`, `perPage` ≤ 100, `q`) with `meta.totalCount` and `meta.totalPages` |
-| `GET /admin/properties/:id` | admin (Milestone 8) | One property, including `lockVersion` |
-| `POST /admin/properties` | admin (Milestone 8) | Create → 201; invalid → 422 with field errors |
-| `PATCH /admin/properties/:id` | admin (Milestone 8) | Update; needs `lockVersion`; stale → 409 `stale_record` |
-| `DELETE /admin/properties/:id` | admin (Milestone 8) | Delete → 204; watchlist items cascade |
+| `GET /admin/properties` | admin (Milestone 9) | Paged list (`page`, `perPage` ≤ 100, `q`) with `meta.totalCount` and `meta.totalPages` |
+| `GET /admin/properties/:id` | admin (Milestone 9) | One property, including `lockVersion` |
+| `POST /admin/properties` | admin (Milestone 9) | Create → 201; invalid → 422 with field errors |
+| `PATCH /admin/properties/:id` | admin (Milestone 9) | Update; needs `lockVersion`; stale → 409 `stale_record` |
+| `DELETE /admin/properties/:id` | admin (Milestone 9) | Delete → 204; watchlist items cascade |
 | `GET/POST/DELETE /saved_searches` | yes | Bonus |
 
 Using `PUT`/`DELETE` keyed on `property_id` makes the toggle idempotent. The client never needs a watchlist-item id.
 
-Admin endpoints (Milestone 8) live in their own `Api::V1::Admin` namespace, behind a base controller that runs `authenticate!` and then `require_admin!` (403). The admin list uses simple numbered pages rather than the cursor, because admins jump between pages and the table is small enough (10k rows) for `OFFSET` to stay fast. Admin params are allow-listed with strong params, so `id`, timestamps and `role`-like fields can never be mass-assigned.
+Admin endpoints (Milestone 9) live in their own `Api::V1::Admin` namespace, behind a base controller that runs `authenticate!` and then `require_admin!` (403). The admin list uses simple numbered pages rather than the cursor, because admins jump between pages and the table is small enough (10k rows) for `OFFSET` to stay fast. Admin params are allow-listed with strong params, so `id`, timestamps and `role`-like fields can never be mass-assigned.
 
 **Search parameters:** `q`, `minPrice`, `maxPrice` (whole AUD), `minBedrooms`, `propertyTypes[]`, `excludeUnderOffer`, `excludePriceWithheld`, `sort` (`newest` | `price_asc` | `price_desc`), plus the paging params below. There is no status param: search always runs on `Property.active` (for sale + under offer), and `excludeUnderOffer` narrows it to for sale. `q` is trimmed and ignored when shorter than 2 characters. Names follow Domain's API, and JSON keys are camelCase. Params are validated by a small query object, `Properties::SearchQuery` (`app/queries/properties/search_query.rb`; not `PropertySearch`, which is the Rails app's module name), and invalid values return 422.
 
@@ -241,13 +251,13 @@ Admin endpoints (Milestone 8) live in their own `Api::V1::Admin` namespace, behi
 | --- | --- | --- |
 | `limit` | 20 | 1–50; out of range → 422 |
 | `cursor` | none (first batch) | Opaque value from `meta.nextCursor`; tampered → 422 |
-| `offset` (Milestone 9) | 0 | ≥ 0, at most 10,000; only used when no `cursor` is sent |
+| `offset` (Milestone 10) | 0 | ≥ 0, at most 10,000; only used when no `cursor` is sent |
 
 The defaults and caps live in one config (`config/pagination.yml`, overridable by `PAGINATION_DEFAULT_LIMIT` / `PAGINATION_MAX_LIMIT` env vars), so they can change without touching code. Sending both `cursor` and `offset` returns 422, because the two modes can't be combined.
 
-**Two paging modes, one endpoint:** `Properties::SearchQuery` picks the mode from the params. Milestone 3 builds cursor mode only, which is all the web app needs. Offset mode is a Milestone 9 item for API clients that want to jump to a position.
+**Two paging modes, one endpoint:** `Properties::SearchQuery` picks the mode from the params. Milestone 3 builds cursor mode only, which is all the web app needs. Offset mode is a Milestone 10 item for API clients that want to jump to a position.
 
-- **Cursor (default, used by the web app):** the cursor holds the last row's sort value and `id`, e.g. `[listed_at, id]`, and is **signed** so it can't be edited (encryption is Milestone 9; see Security). Postgres stores `listed_at` in microseconds but JSON times carry milliseconds, so the cursor stores `listed_at` as **integer microseconds** (not the serialised string); otherwise rows sharing a millisecond would be skipped or repeated. The next query is `WHERE (listed_at, id) < (?, ?) ORDER BY listed_at DESC, id DESC LIMIT limit + 1`, and the extra row decides `hasMore`. Price sorts use `(price_cents, id)` and leave out price-withheld listings, and the UI says so. Price low→high uses `(price_cents, id) > (?, ?)`; high→low scans the same index backwards with `(price_cents, id) < (?, ?)`.
+- **Cursor (default, used by the web app):** the cursor holds the last row's sort value and `id`, e.g. `[listed_at, id]`, and is **signed** so it can't be edited (encryption is Milestone 10; see Security). Postgres stores `listed_at` in microseconds but JSON times carry milliseconds, so the cursor stores `listed_at` as **integer microseconds** (not the serialised string); otherwise rows sharing a millisecond would be skipped or repeated. The next query is `WHERE (listed_at, id) < (?, ?) ORDER BY listed_at DESC, id DESC LIMIT limit + 1`, and the extra row decides `hasMore`. Price sorts use `(price_cents, id)` and leave out price-withheld listings, and the UI says so. Price low→high uses `(price_cents, id) > (?, ?)`; high→low scans the same index backwards with `(price_cents, id) < (?, ?)`.
 - **Offset (when `offset` is sent):** `ORDER BY …, id LIMIT limit + 1 OFFSET offset`. This is for clients that want to jump to a position. The 10,000 cap keeps deep offsets from getting slow.
 
 Both modes return the same `meta`: `limit`, `hasMore`, `nextCursor` (cursor mode) or `nextOffset` (offset mode), and `totalCount`, computed only for the first request and cached.
@@ -311,7 +321,7 @@ State is split three ways, and no piece of state lives in two places. This split
 
 Filters are **not** copied into Jotai. The URL is their single source of truth, so back/forward, refresh and shared links all work without sync code.
 
-**Routes:** `/` → `/search`, `/search`, `/watchlist` (protected via the route's `beforeLoad`), `/login`, `/signup`, and, in Milestone 8, `/admin/properties`, `/admin/properties/new`, `/admin/properties/$id/edit` (admin only, checked in `beforeLoad` against `/me`). Property detail is optional.
+**Routes:** `/` → `/search`, `/search`, `/watchlist` (protected via the route's `beforeLoad`), `/login`, `/signup`, `/properties/$propertyId` (public; Milestone 8), and, in Milestone 9, `/admin/properties`, `/admin/properties/new`, `/admin/properties/$id/edit` (admin only, checked in `beforeLoad` against `/me`).
 
 **Folder layout (feature-sliced)**
 
@@ -320,10 +330,10 @@ web/src/
   main.tsx, router.tsx   entry point, route tree, providers
   routes/         root layout, login and signup pages (search and watchlist pages live in their features)
   features/
-    properties/   SearchPage, FilterBar (text, price, beds, types, toggles, sort), PropertyResultCard, hooks (useSearchProperties, usePropertyTypes), cache (patchCachedProperty), searchSchema (zod, used by validateSearch)
+    properties/   SearchPage, PropertyPage (Milestone 8), FilterBar (text, price, beds, types, toggles, sort), PropertyResultCard, hooks (useSearchProperties, usePropertyTypes), cache (patchCachedProperty), searchSchema (zod, used by validateSearch)
     watchlist/    WatchlistPage, WatchButton, useToggleWatch, useWatchlistChannel
-    auth/         LoginForm, SignupForm, useMe, requireAuth, session (clearUserData, BroadcastChannel), useSessionEvents, requireAdmin (Milestone 8)
-    admin/        (Milestone 8) AdminPropertiesPage (table + pager + filter), PropertyForm (create/edit), useAdminProperties, useSaveProperty, useDeleteProperty
+    auth/         LoginForm, SignupForm, useMe, requireAuth, session (clearUserData, BroadcastChannel), useSessionEvents, requireAdmin (Milestone 9)
+    admin/        (Milestone 9) AdminPropertiesPage (table + pager + filter), PropertyForm (create/edit), useAdminProperties, useSaveProperty, useDeleteProperty
   components/
     ui/           PropertyCard, InfiniteResults (list + sentinel + Load more; `content-visibility` on cards), Skeleton, states (EmptyState, ErrorState), Toaster + toast atoms
   lib/            api.ts (fetch client), cable.ts (ActionCable consumer), queryClient.ts, query keys factory
@@ -358,13 +368,13 @@ The bonus items are cheap to add when planned in from the start, so the skeleton
 | App caching | Redis `Rails.cache` for search `COUNT`s (60 s). Every property create/update/delete bumps a `search_cache_version` key (15-minute expiry), which clears all cached counts at once. The property-type list is a Ruby constant, so it is HTTP-cached instead of copied into Redis. |
 | Security | bcrypt via `has_secure_password`; strong params; `rack-cors` limited to the web origin; JWT in an `HttpOnly` cookie (see Security hardening); no secrets in the repo (`.env.example`). |
 | Validation | Model validations + DB constraints (NOT NULL, CHECK, unique) so bad data is blocked even outside Rails. |
-| Deployment | `docker compose up` (or `make up`) starts `postgres:17`, `redis:7`, `api` (Rails, Puma) and `web` (Vite dev server), each waiting on healthchecks before `db:prepare`. `api/Dockerfile` is the production image Rails generates. A production `web` image (static build behind nginx) is listed under Milestone 9. 12-factor env config. |
-| Observability | Rails' default logs tagged with the request id, with secrets filtered; `/up` health endpoint (Rails 8 default). JSON logs via lograge are a Milestone 9 item. |
+| Deployment | `docker compose up` (or `make up`) starts `postgres:17`, `redis:7`, `api` (Rails, Puma) and `web` (Vite dev server), each waiting on healthchecks before `db:prepare`. `api/Dockerfile` is the production image Rails generates. A production `web` image (static build behind nginx) is listed under Milestone 10. 12-factor env config. |
+| Observability | Rails' default logs tagged with the request id, with secrets filtered; `/up` health endpoint (Rails 8 default). JSON logs via lograge are a Milestone 10 item. |
 | Accessibility | Labelled form controls, a keyboard-usable “Load more” fallback, `aria-pressed` on the watch toggle, an `aria-live` region for toasts. |
 
 ## Security hardening
 
-Security is split in two. **Milestone 1 is the minimum that is still secure**: everything a reviewer would expect from a production-minded login, built with Rails' own tools so it fits the timebox. **Milestone 9 is the nice-to-have hardening**: written up here and in the README as "next", and built only if time is left.
+Security is split in two. **Milestone 1 is the minimum that is still secure**: everything a reviewer would expect from a production-minded login, built with Rails' own tools so it fits the timebox. **Milestone 10 is the nice-to-have hardening**: written up here and in the README as "next", and built only if time is left.
 
 **Deployment assumption:** the web app and the API run on the **same site** (for example `app.example.com` and `api.example.com`), which is the normal production setup. Browsers treat that as same-site, so an `HttpOnly` cookie works in every browser. In development the Vite proxy puts both on one origin, so the same design runs locally unchanged.
 
@@ -381,8 +391,8 @@ Security is split in two. **Milestone 1 is the minimum that is still secure**: e
 - **Why a JWT rather than Rails' encrypted session cookie:** both are stateless; the JWT gives explicit `exp` and claims, verified by one code path for REST and ActionCable, and it is the option the brief names.
 - **Cookies in an API-only app:** `ActionController::API` has no cookie jar by default. Milestone 1 adds `config.middleware.use ActionDispatch::Cookies` in `config/application.rb` and `include ActionController::Cookies` in `Api::V1::BaseController`, so `cookies` works in controllers and `cookies[:auth]` works in `ApplicationCable::Connection`.
 - **Where it lives:** an **`HttpOnly; SameSite=Lax; Path=/` cookie**, with `secure: Rails.env.production?`, set by the API on login and signup. `Secure` is production-only because request specs (rack-test) run over plain http and Safari rejects `Secure` cookies on `http://localhost`. JavaScript can't read it, so an injected script can't steal it, and nothing is kept in `localStorage` or in memory. *(The scaffold currently stores a token with `atomWithStorage`; Milestone 1 removes that.)*
-- **Expiry:** the token is valid for a fixed **24 hours** from login; after that the user signs in again. No renewal logic in Milestone 1 (sliding renewal with a 14-day cap is Milestone 9).
-- **Logout** clears the cookie. Nothing is stored on the server, so a token copied before logout keeps working until it expires (at most 24 hours). This trade-off is stated in the README; instant revocation is a Milestone 9 item.
+- **Expiry:** the token is valid for a fixed **24 hours** from login; after that the user signs in again. No renewal logic in Milestone 1 (sliding renewal with a 14-day cap is Milestone 10).
+- **Logout** clears the cookie. Nothing is stored on the server, so a token copied before logout keeps working until it expires (at most 24 hours). This trade-off is stated in the README; instant revocation is a Milestone 10 item.
 - **CSRF:** because the browser now sends the cookie automatically, every request that changes data (`POST`, `PUT`, `PATCH`, `DELETE`) must carry an `Origin` header equal to `FRONTEND_ORIGIN`, or it gets 403. `SameSite=Lax` already stops the cookie on cross-site `POST`s and `fetch` calls; the `Origin` check is the second layer. `GET` requests never change data.
 - **Multiple tabs:** every tab shares the cookie, so there's nothing to sync between tabs.
 
@@ -393,7 +403,7 @@ Security is split in two. **Milestone 1 is the minimum that is still secure**: e
 
 **Authorisation and data exposure**
 
-- Watchlist queries always go through `current_user.watchlist_items`, so there are no direct-ID lookups and no IDOR. Admin endpoints (Milestone 8) check the role from the database on every request; `role` is never accepted as a param.
+- Watchlist queries always go through `current_user.watchlist_items`, so there are no direct-ID lookups and no IDOR. Admin endpoints (Milestone 9) check the role from the database on every request; `role` is never accepted as a param.
 - Strong params everywhere; serializers allow-list fields, so `password_digest` and session data are never serialised.
 - In production, errors never include stack traces or SQL. `filter_parameters` covers `password`, `token`, `cursor` and `email`.
 
@@ -406,7 +416,7 @@ Security is split in two. **Milestone 1 is the minimum that is still secure**: e
 
 **How it's verified (Milestone 1 specs):** bad login, expired / tampered / `alg: none` JWT, the cookie flags (`HttpOnly` and `SameSite=Lax` always; `Secure` asserted only when `Rails.env.production?` is stubbed true), a token rejected after its 24-hour `exp`, a data-changing request from a foreign `Origin` (403), logout clearing the cookie, a cable connection with no cookie, an expired token or a foreign origin, login throttling by rack-attack (against the test `MemoryStore`), and IDOR attempts on another user's watchlist (Milestone 4). The README includes a short threat-model table (asset → threat → control).
 
-### Milestone 9 — nice-to-have hardening
+### Milestone 10 — nice-to-have hardening
 
 Each item below adds protection on top of the baseline, but none is needed for the app to be secure at this scale.
 
@@ -425,10 +435,10 @@ Tests cover the critical paths listed in the brief rather than chasing a coverag
 **Backend: RSpec + FactoryBot + shoulda-matchers**
 
 - Request specs for `GET /properties`: each filter alone and combined, sort orders, cursor walk-through for each sort (all rows exactly once, no duplicates across batches, `hasMore` false at the end, stable when a row is inserted mid-walk), with the seed deliberately including ties (same `listed_at` / same price) and `listed_at` values that differ by sub-millisecond amounts, the default `limit` when omitted, a 1-character `q` ignored, postcode prefix matching, 400 on a missing required param, 422 on a bad cursor, limit out of range, or min > max, price sorts leaving out withheld prices, sold/withdrawn never returned and “Exclude under offer”, `totalCount` matching the filtered rows, and `watched` true/false per user.
-- Request-spec helper: a shared `json_headers` helper sets `Origin: FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`, otherwise the CSRF check returns 403 before the action runs. One spec omits it on purpose to prove the 403. (Offset-mode specs come with offset mode in Milestone 9.)
+- Request-spec helper: a shared `json_headers` helper sets `Origin: FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`, otherwise the CSRF check returns 403 before the action runs. One spec omits it on purpose to prove the 403. (Offset-mode specs come with offset mode in Milestone 10.)
 - N+1 guard: `bullet` is enabled in the test environment with `Bullet.raise = true`, so any request spec that triggers an N+1 query or an unused eager load fails.
 - Watchlist request specs: auth required (401), idempotent PUT and DELETE (PUT uses `create_or_find_by!`, so a race on the unique index returns the existing row instead of a 500), uniqueness enforced at the DB level, and a sold watched property still listed.
-- Admin request specs (Milestone 8): 401 signed out, 403 for a normal user, create/update/delete for an admin, 422 with field errors, 409 on a stale `lockVersion`, `role` ignored on signup, and an admin price change writing a `property_events` row and broadcasting to watchers.
+- Admin request specs (Milestone 9): 401 signed out, 403 for a normal user, create/update/delete for an admin, 422 with field errors, 409 on a stale `lockVersion`, `role` ignored on signup, and an admin price change writing a `property_events` row and broadcasting to watchers.
 - Auth specs: signup validation, bad login, logout clearing the cookie, cookie flags (`Secure` only in production), a token past its 24-hour `exp` rejected, foreign-`Origin` writes rejected, cable connection auth from the cookie.
 - Model specs: validations, enums; a price or status change writes exactly one `property_events` row with the right from/to values in the same transaction, and a change to another column writes none (guards the `saved_change_to_*` condition) (a failed save leaves neither the change nor the event); `PropertyChangeNotifier` is called only after commit and only for price or status changes.
 - Channel and notifier specs: a connection without auth is rejected; `have_broadcasted_to(user)` fires only for watchers; the payload's `version` is the saved `lock_version`, and a price change raises it.
@@ -443,12 +453,12 @@ Tests cover the critical paths listed in the brief rather than chasing a coverag
 - `WatchButton` updates optimistically, and rolls back with a toast when MSW returns 500. Three fast clicks send their requests one at a time and end in the third click's state.
 - `useWatchlistChannel`: a mock cable message patches the cached card's price; a message with an older `version` than the cached card is ignored and shows no toast.
 - `SearchPage` shows skeleton → results, the empty state, and the error state with retry.
-- `PropertyForm` (Milestone 8) shows 422 field errors next to the right inputs and the reload message on 409; admin routes redirect a normal user away.
+- `PropertyForm` (Milestone 9) shows 422 field errors next to the right inputs and the reload message on 409; admin routes redirect a normal user away.
 - One Playwright e2e test (optional): log in → filter → watch → see it on `/watchlist`.
 
 ## Delivery plan, risks & open questions
 
-The build is split into milestones. Each milestone ends with something that runs, passing specs and a README updated for what it added, so the work can stop after any milestone and still be a coherent submission. Its edge cases are either handled and tested, or listed under known gaps in the README. Before it is committed, a QA pass tries to break it and then a CTO review reads the code, and their real findings are fixed. There is no README milestone at the end, only a short final pass: the README grows one milestone at a time (see "README, kept current in every milestone" below). Estimates assume Rails is new to me, so the Rails-heavy milestones (1, 3, 6) carry the most slack. The core path, Milestones 1–6, adds up to about 3 h 25 min (50 + 25 + 40 + 15 + 50 + 25), plus about 15 min of README updates spread across them, so about 3 h 40 min, leaving a **20-minute buffer** inside 4 hours. The final README pass (5–10 min) comes out of that buffer. Milestone 7 is built only from whatever buffer is left. Milestone 8 (admin UI) is a nice-to-have built only if time is left. Milestone 9 (security hardening and other extras) is written up in the README as "what I'd do next".
+The build is split into milestones. Each milestone ends with something that runs, passing specs and a README updated for what it added, so the work can stop after any milestone and still be a coherent submission. Its edge cases are either handled and tested, or listed under known gaps in the README. Before it is committed, a QA pass tries to break it and then a CTO review reads the code, and their real findings are fixed. There is no README milestone at the end, only a short final pass: the README grows one milestone at a time (see "README, kept current in every milestone" below). Estimates assume Rails is new to me, so the Rails-heavy milestones (1, 3, 6) carry the most slack. The core path, Milestones 1–6, adds up to about 3 h 25 min (50 + 25 + 40 + 15 + 50 + 25), plus about 15 min of README updates spread across them, so about 3 h 40 min, leaving a **20-minute buffer** inside 4 hours. The final README pass (5–10 min) comes out of that buffer. Milestone 7 is built only from whatever buffer is left. Milestone 8 (photos and the property page) was added after manual QA and comes before anything optional. Milestone 9 (admin UI) is a nice-to-have built only if time is left. Milestone 10 (security hardening and other extras) is written up in the README as "what I'd do next".
 
 **Progress:**
 
@@ -461,8 +471,9 @@ The build is split into milestones. Each milestone ends with something that runs
 | 5  | Search & watchlist UI | ~50 min | [x] |
 | 6  | Real-time | ~25 min | [x] |
 | 7  | Performance & bonus | leftover buffer | [x] |
-| 8  | Admin UI for properties (nice to have) | ~55 min | [ ] |
-| 9  | Security hardening & extras (nice to have) | documented only | [ ] |
+| 8  | Property photos & detail page | ~60 min | [x] |
+| 9  | Admin UI for properties (nice to have) | ~55 min | [ ] |
+| 10 | Security hardening & extras (nice to have) | documented only | [ ] |
 
 The scaffold is already done: `api/` (Rails 8.1 API, RSpec, rack-attack, rack-cors, Alba, jwt, bullet), `web/` (Vite, React 19, TanStack, Jotai, Tailwind, Vitest + MSW), Docker Compose, Makefile and CI.
 
@@ -481,10 +492,10 @@ Everything else depends on knowing who the user is, so this comes first.
 
 **Milestone 2 — Property data & seeds (~25 min)**
 
-Data has to exist before anything can be searched. For now it comes from a seed script; an admin screen is the Milestone 8 nice-to-have.
+Data has to exist before anything can be searched. For now it comes from a seed script; an admin screen is the Milestone 9 nice-to-have.
 
 - `role` column on `users`; `properties` and `property_events` migrations with CHECK constraints and the indexes in the Data model section. String-backed `status` and `property_type` enums, and the `Property.active` scope that matches the partial-index predicate.
-- Seed 10k properties across real suburb/postcode pairs with `insert_all` (a few seconds), plus `demo@example.com` (user) and `admin@example.com` (admin, ready for Milestone 8). `make seed` re-runs it from scratch.
+- Seed 10k properties across real suburb/postcode pairs with `insert_all` (a few seconds), plus `demo@example.com` (user) and `admin@example.com` (admin, ready for Milestone 9). `make seed` re-runs it from scratch.
 - `GET /property_types`; `role` in `GET /me`. Model specs for validations, enums and constraints.
 
 **Milestone 3 — Search API (~40 min)**
@@ -508,22 +519,31 @@ Data has to exist before anything can be searched. For now it comes from a seed 
 
 - Per-route rack-attack throttles added to the existing initializer (search, watchlist writes), cached `COUNT`s in Redis, Rails' default body-hash ETag on search, and `content-visibility` on cards instead of list virtualisation.
 
-**Milestone 8 — Nice to have: admin UI for properties (~55 min, only if time is left after Milestones 1–7)**
+**Milestone 8 — Property photos & detail page (~60 min; added after manual QA)**
+
+Manual QA found the app hard to use as a property search: every card read "No photo", and a card couldn't be opened, so there was no way to learn more about a listing. The plan had scoped photos out and left the detail page optional; both are basics anyone looking for a home expects, so this milestone comes before the admin UI.
+
+- Photos: 31 Unsplash photos (Unsplash License, credited in `web/public/images/properties/CREDITS.md`), each as a 960×640 WebP for the property page and a 480×320 copy for cards (about 4.6 MB in all), served by the web app. The seed gives each listing one that suits its type, plus a three-paragraph description, from its own random stream so the other generated values don't change.
+- API: `description` column; `GET /properties/:id` (FR-1a) with `PropertyDetailResource` and `PropertyEventResource`; the id format check shared with the watchlist in `BaseController`.
+- Web: cards link to `/properties/$propertyId` (a stretched link; Watch stays a separate button); `PropertyPage`; `useProperty` with the card as placeholder data; the cache helpers cover the page, so watch toggles and live updates reach it.
+- Specs and Vitest tests for each; QA, a non-technical home-buyer walkthrough and a CTO review before commit.
+
+**Milestone 9 — Nice to have: admin UI for properties (~55 min, only if time is left after Milestones 1–8)**
 
 - API: `Api::V1::Admin::PropertiesController` behind `require_admin!` (endpoints in API design); the `updated_at` index.
 - Web: admin table + one `PropertyForm`, `requireAdmin` in `beforeLoad` (FR-7).
 - Specs: as in Testing strategy. If time is short, ship the table and edit form first.
 
-**Milestone 9 — Nice to have: security hardening and other extras (documented, built only if time is left)**
+**Milestone 10 — Nice to have: security hardening and other extras (documented, built only if time is left)**
 
-- Security: the "Milestone 9 — nice-to-have hardening" list in Security hardening, starting with sliding renewal and the 14-day cap.
+- Security: the "Milestone 10 — nice-to-have hardening" list in Security hardening, starting with sliding renewal and the 14-day cap.
 - Admin: CSV import, image uploads, audit log, user/role management.
 - Features and ops: offset paging, saved searches, PostGIS radius search, lograge, `PropertyChangeNotifier` in a Solid Queue job.
 
-**README, kept current in every milestone:** each milestone updates the README for what it built before it is reviewed and committed. A short final pass (5–10 min, from the buffer) then fixes the structure, removes anything stale, and writes the sections that only make sense once everything is built: what I'd do next and the notes from a JS developer learning Rails. Milestone 1 adds the run steps, architecture and threat-model table; Milestone 3 the index + `EXPLAIN` notes (including the `q` plan); Milestone 5 the state-management rationale; Milestone 6 how to trigger a live update; and every milestone its own trade-offs. Each milestone is ticked off in the progress table above, in this PRD; the README describes what is built and never names milestones. By the end the README covers: one-command setup, demo logins (`demo@example.com`, plus `admin@example.com` if Milestone 8 is built), how to trigger a live update (`demo:change_property` on a property the demo user watches; with Milestone 8, the same through the admin screen in a second window), the decisions and trade-offs in this PRD (including why Vitest instead of Jest) and what I'd do next (PostGIS radius search, saved-search alerts).
+**README, kept current in every milestone:** each milestone updates the README for what it built before it is reviewed and committed. A short final pass (5–10 min, from the buffer) then fixes the structure, removes anything stale, and writes the sections that only make sense once everything is built: what I'd do next and the notes from a JS developer learning Rails. Milestone 1 adds the run steps, architecture and threat-model table; Milestone 3 the index + `EXPLAIN` notes (including the `q` plan); Milestone 5 the state-management rationale; Milestone 6 how to trigger a live update; and every milestone its own trade-offs. Each milestone is ticked off in the progress table above, in this PRD; the README describes what is built and never names milestones. By the end the README covers: one-command setup, demo logins (`demo@example.com`, plus `admin@example.com` if Milestone 9 is built), how to trigger a live update (`demo:change_property` on a property the demo user watches; with Milestone 9, the same through the admin screen in a second window), the decisions and trade-offs in this PRD (including why Vitest instead of Jest) and what I'd do next (PostGIS radius search, saved-search alerts).
 
 **Risks & open questions**
 
 - [ ] **Infinite scroll UX traps.** Losing position on back, an unreachable footer, and the list being hard to use by keyboard. Mitigations: keep the Query cache + router scroll restoration, put no footer under the list, show “Back to top”, and offer a “Load more” button fallback. The README explains each one.
-- [ ] **Scope vs 3–4 h.** Milestone 1 is the heaviest and the least familiar (Rails auth and ActionCable), so it can overrun. Milestone 1 already uses a fixed 24-hour `exp` with no renewal to keep it small. If it still passes 60 minutes, ship login, signup and the cookie first, and add cable auth and the rack-attack store before starting Milestone 2. Lean on Rails built-ins and the scaffold rather than hand-rolling: `has_secure_password`, `authenticate_by`, the scaffolded rack-attack rules, `ActiveModel::Model` validations for `Properties::SearchQuery`, model scopes for each filter, and `config_for(:pagination)`. The admin UI (Milestone 8) starts only once Milestones 1–7 are done.
+- [ ] **Scope vs 3–4 h.** Milestone 1 is the heaviest and the least familiar (Rails auth and ActionCable), so it can overrun. Milestone 1 already uses a fixed 24-hour `exp` with no renewal to keep it small. If it still passes 60 minutes, ship login, signup and the cookie first, and add cable auth and the rack-attack store before starting Milestone 2. Lean on Rails built-ins and the scaffold rather than hand-rolling: `has_secure_password`, `authenticate_by`, the scaffolded rack-attack rules, `ActiveModel::Model` validations for `Properties::SearchQuery`, model scopes for each filter, and `config_for(:pagination)`. The admin UI (Milestone 9) starts only once Milestones 1–8 are done.
 - [ ] **Keyset limits.** You can't jump to page N, price sorts leave out withheld prices, and in a price sort a listing whose price changes mid-scroll can appear twice or be missed (the client de-duplicates by `id`, so a repeat never shows as two cards). All are fine for an infinite feed; note them in the README.

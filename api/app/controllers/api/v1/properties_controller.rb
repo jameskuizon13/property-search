@@ -4,6 +4,8 @@ module Api
       SEARCH_PARAMS = %w[
         q minPrice maxPrice minBedrooms propertyTypes excludeUnderOffer excludePriceWithheld sort cursor limit
       ].freeze
+      # The page shows recent changes, not a full audit trail.
+      HISTORY_LIMIT = 20
 
       # GET /api/v1/properties
       # Public; signing in only adds the per-user `watched` flag.
@@ -17,6 +19,22 @@ module Api
         result = Properties::SearchQuery.new(search_params, user: current_user).call
 
         render_page PropertyResource.new(result.records), result.meta
+      end
+
+      # GET /api/v1/properties/:id
+      # Public, like search, and not limited to active listings: a watched
+      # property that sold still opens. Signing in only adds `watched`.
+      def show
+        property = Property.find(property_id(params[:id]))
+        # One extra row says whether older changes were left out.
+        history = property.property_events.order(created_at: :desc, id: :desc).limit(HISTORY_LIMIT + 1).to_a
+        history_complete = history.size <= HISTORY_LIMIT
+        watched = current_user ? current_user.watchlist_items.exists?(property_id: property.id) : false
+
+        resource = PropertyDetailResource.new(
+          property, params: { watched:, history: history.first(HISTORY_LIMIT), history_complete: }
+        )
+        render json: { data: resource.to_h }
       end
     end
   end

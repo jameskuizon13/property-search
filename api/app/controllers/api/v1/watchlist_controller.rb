@@ -6,8 +6,6 @@ module Api
     # client never needs a watchlist-item id: PUT and DELETE are keyed on the
     # property, which makes the toggle idempotent.
     class WatchlistController < BaseController
-      PROPERTY_ID = /\A[1-9]\d{0,18}\z/
-
       before_action :authenticate!
 
       # The property was deleted between the lookup and the insert.
@@ -28,7 +26,7 @@ module Api
       # inserts first and falls back to the existing row on the unique
       # index, so two PUTs racing each other both succeed.
       def update
-        property = Property.find(property_id)
+        property = Property.find(property_id(params[:property_id]))
         item = watch(property)
         render json: { data: PropertyResource.new(property, params: { watched: true }).to_h },
                status: item.previously_new_record? ? :created : :ok
@@ -37,7 +35,7 @@ module Api
       # DELETE /api/v1/watchlist/:property_id
       # 204 whether or not it was watched, or even exists.
       def destroy
-        current_user.watchlist_items.where(property_id:).delete_all
+        current_user.watchlist_items.where(property_id: property_id(params[:property_id])).delete_all
         head :no_content
       end
 
@@ -55,16 +53,6 @@ module Api
           retry if attempts < 2
           raise
         end
-      end
-
-      # Plain positive integers of up to 19 digits; Rails treats a value past
-      # the bigint max as not found. Without this check, "12abc" would be cast
-      # to 12 and act on another property.
-      def property_id
-        id = params[:property_id]
-        raise ActiveRecord::RecordNotFound.new("Property not found", "Property") unless PROPERTY_ID.match?(id)
-
-        id.to_i
       end
     end
   end

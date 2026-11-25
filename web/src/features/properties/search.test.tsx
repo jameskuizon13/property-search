@@ -102,7 +102,7 @@ describe('search results', () => {
     server.use(signedOut())
     renderApp('/search?sort=price_asc')
 
-    expect(await screen.findByText(/Price sorts leave out listings without a price/)).toBeInTheDocument()
+    expect(await screen.findByText(/Price sorts leave out listings with no price shown/)).toBeInTheDocument()
   })
 })
 

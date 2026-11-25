@@ -1,7 +1,7 @@
 import { apiFetch } from '@/lib/api'
 import type { Page } from '@/lib/types'
 import type { PropertyTypeValue, SearchFilters } from './searchSchema'
-import type { Property } from './types'
+import type { Property, PropertyDetail } from './types'
 
 export function searchParams(filters: SearchFilters, cursor: string | null) {
   const params = new URLSearchParams()
@@ -20,6 +20,11 @@ export function searchParams(filters: SearchFilters, cursor: string | null) {
 export function fetchProperties(filters: SearchFilters, cursor: string | null, signal?: AbortSignal) {
   const query = searchParams(filters, cursor).toString()
   return apiFetch<Page<Property>>(`/properties${query ? `?${query}` : ''}`, { signal })
+}
+
+export async function fetchProperty(id: number, signal?: AbortSignal) {
+  const { data } = await apiFetch<{ data: PropertyDetail }>(`/properties/${id}`, { signal })
+  return data
 }
 
 export type PropertyTypeOption = { value: PropertyTypeValue; label: string }

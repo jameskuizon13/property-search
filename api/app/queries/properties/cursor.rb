@@ -1,7 +1,7 @@
 module Properties
   # Opaque keyset cursor: the last row's [sort value, id], plus the sort it
   # belongs to. Signed, so it can't be edited; decoded values are type-checked
-  # before they reach SQL. (Encrypting it is a Milestone 9 item.)
+  # before they reach SQL. (Encrypting it is a Milestone 10 item.)
   #
   # listed_at is stored as integer microseconds, Postgres's precision. JSON
   # times only carry milliseconds, so a serialised time would skip or repeat
