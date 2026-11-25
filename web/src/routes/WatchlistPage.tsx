@@ -1,6 +1,6 @@
 import { useMe } from '@/features/auth/useMe'
 
-// Placeholder until the watchlist UI lands (Batch 5). Protected by requireAuth.
+// Placeholder until the watchlist UI lands (Milestone 5). Protected by requireAuth.
 export function WatchlistPage() {
   const { data: user } = useMe()
   return (

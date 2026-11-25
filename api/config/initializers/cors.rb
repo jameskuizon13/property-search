@@ -10,7 +10,7 @@ Rails.application.config.middleware.insert_before 0, Rack::Cors do
       headers: %w[Accept Content-Type],
       expose: %w[ETag Retry-After],
       # Only the methods routes use today; PATCH arrives with the admin
-      # screens (Batch 9).
+      # screens (Milestone 8).
       methods: %i[get post put delete options head],
       credentials: true
   end

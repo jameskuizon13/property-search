@@ -5,9 +5,9 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Batches 1–4 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API). The work is split into numbered **batches** (build
-steps, listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
-A label like _(Batch 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
+**Status: Milestones 1–4 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API). The work is split into numbered **milestones**
+(build steps that each end with something that runs, passing specs and an updated README; listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
+A label like _(Milestone 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
 > The brief asked for Jest. Tests use **Vitest** (same API as Jest) with React Testing Library
 > instead, because Vitest reuses the Vite config, so there is no separate Babel/SWC transform to maintain.
@@ -17,7 +17,7 @@ A label like _(Batch 6)_ means that part is planned but not built yet. The full 
 | Part   | Stack |
 | ------ | ----- |
 | `api/` | Rails 8.1 (API mode), Ruby 3.4, Puma, PostgreSQL 17, Redis 7, ActionCable, `jwt`, Alba, rack-cors, rack-attack, bullet, RSpec + FactoryBot + shoulda-matchers |
-| `web/` | Vite, React 19, TypeScript, TanStack Query, TanStack Router, zod, Jotai, `@rails/actioncable`, Tailwind 4, TanStack Virtual _(installed; used only if time allows, Batch 7)_, Vitest + React Testing Library + MSW, oxlint |
+| `web/` | Vite, React 19, TypeScript, TanStack Query, TanStack Router, zod, Jotai, `@rails/actioncable`, Tailwind 4, TanStack Virtual _(installed; used only if time allows, Milestone 7)_, Vitest + React Testing Library + MSW, oxlint |
 
 Infra: Docker Compose (db, redis, api, web), a root `Makefile`, GitHub Actions CI (one job per app), husky + lint-staged git hooks.
 
@@ -239,7 +239,7 @@ Nothing needs copying: every value has a default in code that matches the Docker
 | `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent`, `WatchlistItem` |
 | `api/app/controllers` | API controllers under `/api/v1` |
 | `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
-| `api/app/channels` | ActionCable connection auth _(Batch 1)_; `WatchlistChannel` _(Batch 6)_ |
+| `api/app/channels` | ActionCable connection auth _(Milestone 1)_; `WatchlistChannel` _(Milestone 6)_ |
 | `api/app/services` | `AuthToken` (JWT issue/verify, cookie options) |
 | `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor`; `Watchlist::ListQuery` and `Watchlist::Cursor` (the user's watchlist, newest added first) |
 | `api/config/pagination.yml` | Default and maximum `limit` (`PAGINATION_DEFAULT_LIMIT`, `PAGINATION_MAX_LIMIT`) |
@@ -257,7 +257,7 @@ The seed creates two accounts, both with the password `property-demo-2026`:
 | Email               | Role  |
 | ------------------- | ----- |
 | `demo@example.com`  | user  |
-| `admin@example.com` | admin (admin screens are Batch 9) |
+| `admin@example.com` | admin (admin screens are Milestone 8) |
 
 `GET /api/v1/me` returns the `role`, so the UI can tell them apart. Sign-up ignores any `role`
 param and always creates a normal user.
@@ -286,7 +286,7 @@ there also requires `SEED_DEMO_PASSWORD`, so the published password is never use
   names from its default locale don't look Australian. `image_url` is left empty; the UI shows a
   placeholder.
 
-## Trying the live updates _(available from Batch 6)_
+## Trying the live updates _(available from Milestone 6)_
 
 1. Open the app in two browser windows and sign in as `demo@example.com` in both.
 2. Watch a property from the search page.
@@ -311,17 +311,17 @@ list with its new badge until the next refetch, rather than vanishing under the 
 
 ### Auth ([PRD](PRD.md#security-hardening))
 
-- One HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production). Fixed 24 h `exp`: after that you sign in again. No renewal in Batch 1; sliding renewal with a 14-day cap is [Batch 10](PRD.md#batch-10--nice-to-have-hardening).
+- One HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production). Fixed 24 h `exp`: after that you sign in again. No renewal in Milestone 1; sliding renewal with a 14-day cap is [Milestone 9](PRD.md#milestone-9--nice-to-have-hardening).
 - Signing secret: `JWT_SECRET` if set, otherwise a key derived from `secret_key_base` for this one purpose (`key_generator.generate_key("auth/jwt")`), so the JWT key is never the same as Rails' own secret. The app refuses to boot with a `JWT_SECRET` under 32 bytes: a short HS256 key could be brute-forced offline from any user's own cookie. `master.key` is gitignored, so a fresh clone works without it; production sets `JWT_SECRET` (or `SECRET_KEY_BASE`).
 - Production refuses to boot without `FRONTEND_ORIGIN`, or with an entry that isn't a bare origin (e.g. a trailing slash), instead of answering every write with a silent 403.
 - Why a JWT rather than Rails' encrypted session cookie: both are stateless; the JWT gives explicit `exp` and claims, verified by one code path for REST and ActionCable, and it is the option the brief names. `HttpOnly` keeps it away from JavaScript either way.
-- Trade-off: nothing is stored server-side, so a token copied before logout stays valid for up to 24 h. Instant revocation (a `sessions` table) is in [Batch 10](PRD.md#batch-10--nice-to-have-hardening).
+- Trade-off: nothing is stored server-side, so a token copied before logout stays valid for up to 24 h. Instant revocation (a `sessions` table) is in [Milestone 9](PRD.md#milestone-9--nice-to-have-hardening).
 - Assumes web and API are on the same site (e.g. `app.` and `api.` subdomains); in dev the Vite proxy gives one origin.
 - CSRF (another site making the browser send a request with your cookie): `SameSite=Lax` (the browser won't attach the cookie to cross-site `POST`s) plus an `Origin` check against `FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`.
 - Logout disconnects all of that user's live sockets on every device; other devices simply reconnect with their still-valid cookie.
 - Where it lives: `AuthToken` (`api/app/services/auth_token.rb`) issues and verifies the token; `Api::V1::BaseController` reads the cookie (`authenticate!`) and runs the `Origin` check; `ApplicationCable::Connection` reuses `AuthToken`. On the web, `apiFetch` sends `credentials: 'include'` and never sees the token; `requireAuth` guards routes in `beforeLoad`; a 401 anywhere else clears cached data and goes to `/login?next=…` (only same-app paths are accepted as `next`).
 
-**Threat model (Batch 1)**
+**Threat model (Milestone 1)**
 
 | Asset | Threat | Control | Spec |
 | ----- | ------ | ------- | ---- |
@@ -336,7 +336,7 @@ list with its new badge until the next refetch, rather than vanishing under the 
 | Watchlists | Reading or changing another user's watchlist (IDOR) | Every query goes through `current_user.watchlist_items`; endpoints are keyed on the property, never a watchlist-item id; a `user_id` param is ignored; ids must be plain integers (`12abc` and `12.0` are 404s, not property 12) | `watchlist_spec.rb` |
 | Redirects | Open redirect via `?next=` | Only same-origin paths accepted; control characters and backslashes rejected (URL parsers strip or rewrite them); the normalised result is checked again, since dot segments like `/.//evil.example` normalise to `//evil.example` | `safeNext.test.ts`, `auth.test.tsx` |
 
-Known, accepted gaps (Batch 1):
+Known, accepted gaps (Milestone 1):
 
 - **Signup reveals whether an email is registered** ("has already been taken"). Hiding it needs an email-verification flow, which this app doesn't have; the `auth/ip` throttle limits how fast anyone can probe.
 - **Rate limits use fixed one-minute windows**, so up to ~20 attempts can land across a window boundary. `Retry-After` reports the time left in the current window.
@@ -344,7 +344,7 @@ Known, accepted gaps (Batch 1):
 - **Tokens have zero clock leeway** (`iat` in the future is rejected). Fine for one API instance; several instances need synced clocks (NTP).
 - **Malformed JSON bodies are logged raw in development** (Rails' debug-level parse-error log, password included). Production logs at `info` and doesn't write them.
 - **Logout is idempotent:** it always clears the cookie (even an expired or tampered one) and returns 204. Disconnecting sockets is best effort: if Redis is down, the error is reported and the cookie is still cleared.
-- **An open WebSocket outlives its token.** The cookie is checked when the socket connects, so a socket opened just before `exp` keeps receiving that user's updates until it drops, the user logs out, or the server restarts. Re-checking `exp` on the connection is a Batch 10 item.
+- **An open WebSocket outlives its token.** The cookie is checked when the socket connects, so a socket opened just before `exp` keeps receiving that user's updates until it drops, the user logs out, or the server restarts. Re-checking `exp` on the connection is a Milestone 9 item.
 - **Subdomain deployment needs a proxy or a base URL.** The web app calls same-origin `/api/v1` and `/cable` paths, so `app.` + `api.` subdomains need either a reverse proxy in front of `app.` or a configurable API base URL. CORS and cable origins are already driven by `FRONTEND_ORIGIN`.
 
 ### Real-time ([PRD](PRD.md#real-time-design-actioncable))
@@ -373,7 +373,7 @@ Known, accepted gaps (Batch 1):
 - Partial btree indexes (an index over only the rows matching a `WHERE`, so it stays small) `WHERE status IN ('for_sale', 'under_offer')`, matching the `Property.active` scope exactly: `(listed_at DESC, id DESC)` for newest, `(price_cents, id)` (also `price_cents IS NOT NULL`) for both price sorts, `(property_type, bedrooms)` for narrow filters.
 - Free-text `q`: GIN `gin_trgm_ops` on `suburb` and `street_address` (`ILIKE '%q%'`), plus a `text_pattern_ops` btree on `postcode` for prefix matching (`LIKE 'q%'`, so `30` finds `3065`).
 - **Extended statistics** on `(property_type, bedrooms)` (`CREATE STATISTICS … (mcv)`). See the villas case below for why. `schema.rb` can't record them, so the seed also creates them (`IF NOT EXISTS`) for databases loaded from `schema.rb`.
-- Every `properties` index appears in at least one plan below, so none was dropped. (`watchlist_items(property_id)` and the `property_events` index serve Batch 6.)
+- Every `properties` index appears in at least one plan below, so none was dropped. (`watchlist_items(property_id)` and the `property_events` index serve Milestone 6.)
 - `watchlist_items (user_id, created_at DESC, id DESC)` serves `GET /watchlist`: an index scan with `Index Cond: user_id = … AND ROW(created_at, id) < ROW(…)` and no sort, then a primary-key lookup per row on `properties`. Checked by hand with 20k watchlist rows across 50 users (in a rolled-back transaction; the seed creates no watchlist rows, so there's no committed plan to reproduce). With only a few hundred rows Postgres prefers a sequential scan, which is fine at that size. The unique `(user_id, property_id)` index enforces one row per property and serves the `watched` join.
 
 #### EXPLAIN evidence
@@ -439,16 +439,18 @@ Trade-off: a very common `q` that is also rare among the newest listings could s
 ### N+1, rate limiting & caching ([PRD](PRD.md#non-functional-requirements))
 
 - `bullet` is in the development and test groups: it logs in development and raises in the test suite (`Bullet.raise = true`), so any request spec with an N+1 fails. `spec/config/bullet_spec.rb` proves it still raises.
-- rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store. _(Batch 1)_
-- Per-route rack-attack throttles for search and watchlist writes, and Redis-cached search counts, are later batches (Batch 7).
+- rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store. _(Milestone 1)_
+- Per-route rack-attack throttles for search and watchlist writes, and Redis-cached search counts, come in Milestone 7.
 
 ## Build progress
 
-The core path (Batches 1–6 plus the README) is about 3 h 40 min, leaving a **20-minute buffer**
-inside 4 hours. Batch 7 only uses leftover buffer. Batches 9–10 are nice-to-haves.
+The core path (Milestones 1–6) is about 3 h 40 min, including the README update each milestone
+ends with, leaving a **20-minute buffer** inside 4 hours. A short final README pass comes out of
+that buffer. Milestone 7 only uses leftover buffer.
+Milestones 8–9 are nice-to-haves.
 
-| Batch | Name | Estimate | Actual | Done |
-| ----- | ---- | -------- | ------ | ---- |
+| Milestone | Name | Estimate | Actual | Done |
+| --------- | ---- | -------- | ------ | ---- |
 | 1  | Auth & minimum security | ~50 min | | [x] |
 | 2  | Property data & seeds | ~25 min | | [x] |
 | 3  | Search API | ~40 min | | [x] |
@@ -456,9 +458,8 @@ inside 4 hours. Batch 7 only uses leftover buffer. Batches 9–10 are nice-to-ha
 | 5  | Search & watchlist UI | ~50 min | | [ ] |
 | 6  | Real-time | ~25 min | | [ ] |
 | 7  | Performance & bonus | leftover buffer | | [ ] |
-| 8  | README | ~15 min | | [ ] |
-| 9  | Admin UI for properties (nice to have) | ~55 min | | [ ] |
-| 10 | Security hardening & extras (nice to have) | documented only | | [ ] |
+| 8  | Admin UI for properties (nice to have) | ~55 min | | [ ] |
+| 9  | Security hardening & extras (nice to have) | documented only | | [ ] |
 
 ## Notes from a JS/TS developer learning Rails
 
