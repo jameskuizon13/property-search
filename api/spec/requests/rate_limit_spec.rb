@@ -121,29 +121,33 @@ RSpec.describe "Rate limiting", type: :request do
   end
 
   # Request specs can't send these paths as-is (the test client tidies the
-  # URL first), so check each rule's key on a raw Rack request. A real server
-  # routes all of these to the same action.
+  # URL first), so these go through the whole app on raw Rack requests. The
+  # router sends every spelling to the same action, and rack-attack
+  # normalises the path the same way, so they all share one counter.
   describe "path spellings the router treats as the same" do
-    def key(rule, method, path, cookie: nil)
-      env = Rack::MockRequest.env_for(path, method:, "REMOTE_ADDR" => "203.0.113.5")
+    def raw(method, path, cookie: nil)
+      env = Rack::MockRequest.env_for(path, method:, "REMOTE_ADDR" => "203.0.113.5",
+                                            "HTTP_ORIGIN" => frontend_origin, "HTTP_ACCEPT" => "application/json")
       env["HTTP_COOKIE"] = cookie if cookie
-      Rack::Attack.throttles.fetch(rule).block.call(Rack::Attack::Request.new(env))
+      Rails.application.call(env).first
     end
 
-    it "keys every spelling of the search path" do
-      [ "/api/v1/properties", "/api/v1/properties/", "/api/v1//properties", "/api//v1/properties//",
-        "/api/v1/properties.json" ].each do |path|
-        expect(key("search/ip", "GET", path)).to eq("203.0.113.5"), path
-      end
-      expect(key("search/ip", "GET", "/api/v1/properties/42")).to be_nil
+    it "counts every spelling of the search path against search/ip" do
+      paths = [ "/api/v1/properties", "/api/v1/properties/", "/api/v1//properties", "/api//v1/properties//",
+                "/api/v1/properties.json" ]
+      statuses = Array.new(120) { |n| raw("GET", paths[n % paths.size]) }
+      expect(statuses.uniq).to eq([ 200 ])
+
+      expect(paths.map { raw("GET", _1) }.uniq).to eq([ 429 ])
     end
 
-    it "keys every spelling of a watchlist write" do
-      cookie = "#{AuthToken::COOKIE_NAME}=#{AuthToken.encode(create(:user, id: 77))}"
-      [ "/api/v1/watchlist/1", "/api/v1/watchlist/1/", "/api/v1//watchlist//1" ].each do |path|
-        expect(key("watchlist/user", "DELETE", path, cookie:)).to eq("user:77"), path
-      end
-      expect(key("watchlist/user", "GET", "/api/v1/watchlist", cookie:)).to be_nil
+    it "counts every spelling of a watchlist write against watchlist/user" do
+      cookie = "#{AuthToken::COOKIE_NAME}=#{AuthToken.encode(create(:user))}"
+      paths = [ "/api/v1/watchlist/0", "/api/v1/watchlist/0/", "/api/v1//watchlist//0" ]
+      statuses = Array.new(60) { |n| raw("DELETE", paths[n % paths.size], cookie:) }
+      expect(statuses).not_to include(429)
+
+      expect(paths.map { raw("DELETE", _1, cookie:) }.uniq).to eq([ 429 ])
     end
   end
 
