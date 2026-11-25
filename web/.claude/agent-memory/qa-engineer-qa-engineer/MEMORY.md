@@ -1,0 +1,2 @@
+- [QA setup for property-search](project_qa_setup.md) — servers, demo-data hygiene, fetch-override and iframe probing tricks
+- [Open QA issues from Milestone 5](project_open_qa_issues.md) — reported 2026-11-25; re-verify next milestone

@@ -1,0 +1,1 @@
+- [QA environment](qa-environment.md) — alt ports 3001/5174, demo logins, seed id range, live-update test tricks, M6 open issues to re-verify

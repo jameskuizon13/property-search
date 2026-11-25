@@ -101,7 +101,7 @@ Each requirement below has acceptance criteria a test can check.
 - The API uses keyset pagination with an opaque `nextCursor`. The end of the list is signalled by `hasMore: false`, which shows an “End of results” marker.
 - The header shows the total once (“1,284 properties”), taken from the first response.
 - While a batch loads, a row of skeleton cards appears at the bottom. If it fails, an inline “Retry” appears there without losing the results already loaded.
-- *(Milestone 7)* Long lists stay cheap to render without virtualisation: each card has `content-visibility: auto` with a placeholder height matched to the real card, so off-screen cards skip layout and paint but stay in the DOM, in find-in-page and in the accessibility tree, and Back still lands on the same card. TanStack Virtual was considered and dropped (see the README for why).
+- *(Milestone 7)* Long lists stay cheap to render without virtualisation: each card has `content-visibility: auto` with a placeholder height matched to the real card, so off-screen cards skip layout and paint but stay in the DOM, in find-in-page and in the accessibility tree, and Back still lands on the same card. TanStack Virtual was considered and dropped (see `docs/features/performance.md` for why).
 - Going back from a property keeps the loaded batches and scroll position (Query cache + router scroll restoration). A “Back to top” button appears once more than one batch is loaded and the page is scrolled past the first screen; it moves focus to the page heading.
 - Keyboard and screen-reader users get a visible “Load more” button as a fallback to the sentinel.
 

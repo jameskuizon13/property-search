@@ -1,0 +1,39 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "api"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "make",
+      "runtimeArgs": [
+        "web"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "api-alt",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd api && FRONTEND_ORIGIN=http://localhost:5174 exec bin/rails server -p 3001 -P tmp/pids/alt-server.pid"
+      ],
+      "port": 3001
+    },
+    {
+      "name": "web-alt",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd web && API_PROXY_TARGET=http://localhost:3001 exec pnpm dev --port 5174 --strictPort"
+      ],
+      "port": 5174
+    }
+  ]
+}

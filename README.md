@@ -237,7 +237,8 @@ Nothing needs copying: every value has a default in code that matches the Docker
 ### Where things live
 
 See [Folder structure](#folder-structure): what each folder holds, how they connect, and why
-there are more than Rails' defaults.
+there are more than Rails' defaults. How each feature works, and why, is in
+[docs/features/](docs/features/README.md).
 
 ### Demo logins
 
@@ -284,6 +285,7 @@ in development Vite proxies both, so the browser only ever talks to one origin.
 property-search/
 ├── api/                 Rails JSON API + ActionCable
 ├── web/                 React single-page app (Vite)
+├── docs/features/       one living doc per feature: how it works and why
 ├── docker/              pgAdmin's server list
 ├── docker-compose.yml   db, redis, api, web
 ├── Makefile             shortcuts for both apps
@@ -416,17 +418,21 @@ list with its new badge until the next refetch, rather than vanishing under the 
 
 ## Design decisions
 
+The short version for reviewers. Each feature's full reasoning (what was chosen, what was turned
+down and why, the rules a change must keep, and the known gaps) lives in
+[docs/features/](docs/features/README.md).
+
 ### Auth ([PRD](PRD.md#security-hardening))
 
-- One HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production). Fixed 24 h `exp`: after that you sign in again. No renewal yet; sliding renewal with a 14-day cap is [planned](PRD.md#milestone-9--nice-to-have-hardening).
-- Signing secret: `JWT_SECRET` if set, otherwise a key derived from `secret_key_base` for this one purpose (`key_generator.generate_key("auth/jwt")`), so the JWT key is never the same as Rails' own secret. The app refuses to boot with a `JWT_SECRET` under 32 bytes: a short HS256 key could be brute-forced offline from any user's own cookie. `master.key` is gitignored, so a fresh clone works without it; production sets `JWT_SECRET` (or `SECRET_KEY_BASE`).
-- Production refuses to boot without `FRONTEND_ORIGIN`, or with an entry that isn't a bare origin (e.g. a trailing slash), instead of answering every write with a silent 403.
-- Why a JWT rather than Rails' encrypted session cookie: both are stateless; the JWT gives explicit `exp` and claims, verified by one code path for REST and ActionCable, and it is the option the brief names. `HttpOnly` keeps it away from JavaScript either way.
-- Trade-off: nothing is stored server-side, so a token copied before logout stays valid for up to 24 h. Instant revocation (a `sessions` table) is [planned](PRD.md#milestone-9--nice-to-have-hardening).
-- Assumes web and API are on the same site (e.g. `app.` and `api.` subdomains); in dev the Vite proxy gives one origin.
-- CSRF (another site making the browser send a request with your cookie): `SameSite=Lax` (the browser won't attach the cookie to cross-site `POST`s) plus an `Origin` check against `FRONTEND_ORIGIN` on every `POST`/`PUT`/`PATCH`/`DELETE`.
-- Logout disconnects all of that user's live sockets on every device; other devices simply reconnect with their still-valid cookie.
-- Where it lives: `AuthToken` (`api/app/services/auth_token.rb`) issues and verifies the token; `Api::V1::BaseController` reads the cookie (`authenticate!`) and runs the `Origin` check; `ApplicationCable::Connection` reuses `AuthToken`. On the web, `apiFetch` sends `credentials: 'include'` and never sees the token; `requireAuth` guards routes in `beforeLoad`; a 401 anywhere else clears the user's cached data, shows "You've been signed out" and re-runs the route guards, so only a protected page goes to `/login?next=…` and search stays put (only same-app paths are accepted as `next`). Logging out in one tab signs out the app's other tabs through a `BroadcastChannel('auth')` (see [Search & watchlist UI](#search--watchlist-ui-prd)).
+- One HS256 JWT in an `HttpOnly; SameSite=Lax` cookie (`Secure` in production), with a fixed 24 h
+  expiry. One code path (`AuthToken`) checks it for REST and for the WebSocket, and the web app
+  never sees the token.
+- CSRF protection is `SameSite=Lax` plus an `Origin` check against `FRONTEND_ORIGIN` on every write.
+- Trade-off: nothing is stored server-side, so a token copied before logout stays valid until it
+  expires. Revocation and sliding renewal are [planned](PRD.md#milestone-9--nice-to-have-hardening).
+- Being signed out from elsewhere (a 401, or a logout in another tab) clears the user's data and
+  shows a toast; only a protected page goes to `/login?next=…`.
+- Why each choice, what was rejected, and the code map: [docs/features/auth.md](docs/features/auth.md).
 
 **Threat model**
 
@@ -443,44 +449,33 @@ list with its new badge until the next refetch, rather than vanishing under the 
 | Watchlists | Reading or changing another user's watchlist (IDOR) | Every query goes through `current_user.watchlist_items`; endpoints are keyed on the property, never a watchlist-item id; a `user_id` param is ignored; ids must be plain integers (`12abc` and `12.0` are 404s, not property 12) | `watchlist_spec.rb` |
 | Redirects | Open redirect via `?next=` | Only same-origin paths accepted; control characters and backslashes rejected (URL parsers strip or rewrite them); the normalised result is checked again, since dot segments like `/.//evil.example` normalise to `//evil.example` | `safeNext.test.ts`, `auth.test.tsx` |
 
-Known, accepted gaps:
-
-- **Signup reveals whether an email is registered** ("has already been taken"). Hiding it needs an email-verification flow, which this app doesn't have; the `auth/ip` throttle limits how fast anyone can probe.
-- **Rate limits use fixed one-minute windows**, so up to ~20 attempts can land across a window boundary. `Retry-After` reports the time left in the current window.
-- **Rate limiting in Docker Compose** sees the Vite container as the peer, so all browsers share one bucket there. In production, set `TRUSTED_PROXIES` to the load balancer's range.
-- **Tokens have zero clock leeway** (`iat` in the future is rejected). Fine for one API instance; several instances need synced clocks (NTP).
-- **Malformed JSON bodies are logged raw in development** (Rails' debug-level parse-error log, password included). Production logs at `info` and doesn't write them.
-- **Logout is idempotent:** it always clears the cookie (even an expired or tampered one) and returns 204. Disconnecting sockets is best effort: if Redis is down, the error is reported and the cookie is still cleared.
-- **An open WebSocket outlives its token.** The cookie is checked when the socket connects, so a socket opened just before `exp` keeps receiving that user's updates until it drops, the user logs out, or the server restarts. Re-checking `exp` on the connection is planned hardening.
-- **Subdomain deployment needs a proxy or a base URL.** The web app calls same-origin `/api/v1` and `/cable` paths, so `app.` + `api.` subdomains need either a reverse proxy in front of `app.` or a configurable API base URL. CORS and cable origins are already driven by `FRONTEND_ORIGIN`.
+Known, accepted gaps (signup reveals registered emails, fixed rate-limit windows, a socket that
+outlives its token, and more) are listed in [docs/features/auth.md](docs/features/auth.md#known-gaps).
 
 ### Real-time ([PRD](PRD.md#real-time-design-actioncable))
 
-- Both callbacks are guarded by `saved_change_to_price_cents? || saved_change_to_status?` (in after-callbacks `*_changed?` is already false).
-- `Property#after_update` (runs inside the save's transaction) writes a `property_events` row alongside the price/status change, so history can't miss a change.
-- `after_update_commit` (runs only after the transaction commits) calls `PropertyChangeNotifier`, so watchers only hear about changes that were actually saved.
-- Broadcasts run inline, with no job: each is a ~1 ms Redis publish, and inline delivery also works from rake tasks and the console. At scale it would move to a Solid Queue job with retries.
-- One per-user `WatchlistChannel` stream instead of one per property: one subscription per user, and a user can only ever receive their own stream. Subscription params are ignored, and the channel has no actions (`subscribed` is private, so a client can't re-run it).
-- The message is `{ type: "property.updated", property, changes }`: `property` is the same shape as REST (with `watched: true`, since only watchers get it) and `changes` holds `[old, new]` for `priceCents` and/or `status`. A save that changes both writes two event rows and sends one message.
-- **Ordering:** every property carries a `version` (its `lock_version`, bumped on each save) in REST and in the message. The client (`useWatchlistChannel`, mounted once in the root layout) replaces a cached card only when the message's `version` is newer than **that card's**, checked per cached copy, so a late or repeated message never puts an older price back, even when search and the watchlist hold different versions. It toasts each new version once per tab, also when no list on that tab holds the card, and never for a message older than what it already shows. Close prices are written in full ("$2,005,000 → $2,000,000") rather than as two identical short forms.
-- The patch keeps the card's own `watched` flag (a watch click still in flight decides that). Before patching, it cancels batches already loading for lists that show the card, as the watch toggle does, so an older response can't land on top of it; a list still on its first load is left alone, since cancelling it would leave it stuck on its skeletons.
-- If Redis is down after a change commits, the error is reported and the save still succeeds; watchers see the new values on their next refetch.
-- **Reconnects:** ActionCable retries by itself. After a *re*connect the watchlist refetches and search batches are marked stale (refreshed on their next view, not all at once), since updates sent while the socket was down are gone. A live update that arrives mid-refetch restarts that refetch rather than cancelling it for good. A dot and a word by the user's name show the state ("Live", "Connecting…", "Offline"); if the server refuses the socket (for example the cookie expired), it reads "Offline".
-- Demo tasks (`api/lib/tasks/demo.rake`) use `update!`, so they go through the same callbacks an admin edit will. The seed uses `insert_all` on purpose, so seeding broadcasts nothing.
-- Trade-off: a sign-out anywhere disconnects that user's sockets everywhere (see Auth); other devices reconnect and refetch their watchlist, which is harmless.
+- A price or status change writes a `property_events` row in the same transaction. Watchers are told
+  only after commit, inline (no job), on one `WatchlistChannel` stream per user.
+- The message reuses the REST shape plus `version` (the row's `lock_version`). The client replaces a
+  cached card only when the message is newer than that card, so a late or repeated message can't put
+  an older price back.
+- After a reconnect the watchlist refetches and search is marked stale, since messages sent while
+  offline are gone.
+- Details: [docs/features/live-updates.md](docs/features/live-updates.md).
 
 ### Search & pagination ([PRD](PRD.md#api-design))
 
-- Keyset pagination (each page starts after the last row seen, instead of `OFFSET`, so deep pages stay fast) with an opaque, signed cursor (`[sort value, id]`); fetches `limit + 1` to decide `hasMore`. The cursor stores `listed_at` as integer microseconds (Postgres precision), since JSON times only carry milliseconds.
-- Search always returns active listings (`for_sale` + `under_offer`, via `Property.active`); there is no `status` param, and sold/withdrawn never appear. An "Exclude under offer" toggle narrows to `for_sale`. The watchlist is not limited to active, so a watched property that sells stays there with its new badge.
-- `GET /api/v1/properties` params: `q`, `minPrice`, `maxPrice` (whole AUD, inclusive), `minBedrooms`, `propertyTypes[]` (or comma-separated), `excludeUnderOffer`, `excludePriceWithheld` (`true`/`false`/`1`/`0`), `sort` (`newest` | `price_asc` | `price_desc`), `cursor`, `limit` (default 20, max 50). Response: `{ data: [...], meta: { limit, hasMore, nextCursor?, totalCount? } }`; `totalCount` only on the first batch (and no `COUNT` query at all when that batch already holds every row).
-- `q` is trimmed and ignored when shorter than 2 characters; `%` and `_` are matched literally. Every value is type-checked: a bad value (`minBedrooms=banana`, an array where one value is expected, an unknown type or sort, `limit` out of range, min > max, a forged cursor, or a cursor from another sort) returns 422 with every bad field listed at once, keyed by the same camelCase names the client sends (`details.maxPrice`), like every other JSON key. There are no required params, so search never returns 400. NUL bytes in any value are a 422, not a database error.
-- The cursor is signed (HMAC-SHA256, JSON payload, URL-safe) and records the sort it was issued for. Its values are type-checked as integers before they reach SQL.
-- `watched` comes from one `LEFT JOIN watchlist_items … AND user_id = ?`, selected as a boolean, so the page is one query; `totalCount` is a separate `COUNT` on the filtered scope, without the join. A spec checks the query count doesn't grow with the number of rows.
-- `GET /api/v1/watchlist` (`cursor`, `limit`) returns the user's watched properties, most recently added first, in the same shape and envelope as search (every row `watched: true`). It isn't limited to active listings. Its cursor is `[watchlist_items.created_at, id]` in microseconds, signed with its own key, so a search cursor is a 422 there. Another user's cursor only marks a position in your own list, so it leaks nothing.
-- `PUT /api/v1/watchlist/:propertyId` → 201 when added, 200 when already watched (both return the property). It uses `create_or_find_by!`: insert first, and on the unique index fall back to the existing row, so two racing PUTs both succeed instead of one getting a 500. Unknown property → 404. `DELETE /api/v1/watchlist/:propertyId` → 204 whether or not it was watched. All three need sign-in (401); the writes need the `Origin` check (403). If a DELETE lands between a PUT's failed insert and its lookup, the PUT retries once. Trade-off: each repeat PUT uses up a sequence value and logs a `duplicate key` line in Postgres.
-- Price sorts leave out listings with a withheld price ("Contact agent"), and the UI says so.
-- Honest limits: no jumping to page N, and in a price sort a listing whose price changes mid-scroll can appear twice (de-duplicated by `id` on the client) or be missed.
+- Keyset pagination with a signed cursor (`[sort value, id]`, with `listed_at` in microseconds, the
+  precision Postgres stores), so deep pages cost the same as the first.
+- Search only returns active listings (`for_sale`, `under_offer`); there is no `status` param.
+- Every param is type-checked, and a bad request gets a 422 listing every bad field at once.
+- `watched` comes from one `LEFT JOIN`, so a page is one query; the total is a separate, cached `COUNT`.
+- The watchlist API is keyed on the property (`PUT`/`DELETE /watchlist/:propertyId`), idempotent, and
+  always scoped to `current_user`, so there is no IDOR.
+- Honest limits: no jumping to page N, and in a price sort a listing whose price changes mid-scroll
+  can appear twice (de-duplicated on the client) or be missed.
+- Params, decisions and known gaps: [docs/features/search.md](docs/features/search.md) and
+  [docs/features/watchlist.md](docs/features/watchlist.md).
 
 ### Indexes ([PRD](PRD.md#data-model--indexing))
 
@@ -559,39 +554,39 @@ Every piece of state has exactly one owner, picked by where it has to survive:
 
 ### Search & watchlist UI ([PRD](PRD.md#frontend-architecture))
 
-- **Search page** (`web/src/features/properties`): `FilterBar` writes every filter to the URL. Price min/max are selects with fixed steps, and a max below the min is disabled. Changing a filter starts again from the first batch; a slow response for older filters only lands in their own cache entry, so it can never replace newer results. Text under 2 characters isn't sent (the API would ignore it), so typing one letter doesn't refetch.
-- **The URL is checked, not trusted:** `searchSchema` drops any invalid value from a hand-edited URL (an unknown sort or property type, beds over 5, a max below the min, control characters in `q`) instead of sending a request the API would answer with a 422. Property types can be a JSON array (what the app writes) or the API's comma form (`house,villa`). Unknown keys such as `utm_source` are ignored: they don't count as a filter or split the cache. The router merges raw URL values back in for keys the validator leaves out, so `validateSearch` always returns every filter key. Property-type *values* are hard-coded there as a URL contract; their *labels* come from `GET /property_types`.
-- **`InfiniteResults`** (`web/src/components/ui`) is shared by search and the watchlist. An `IntersectionObserver` with a 600 px margin on a sentinel after the list loads the next batch before you reach the end, guarded by `hasNextPage && !isFetchingNextPage` so it never double-fetches. Cards are de-duplicated by `id`. Loading shows skeleton cards (a row of them at the bottom for later batches); a failed first load shows an error with Retry, worded by cause (connection, server, or a rejected request), and 4xx errors aren't retried automatically; a failed later batch shows an inline Retry and keeps what's loaded; the end shows "End of results"; an empty result says which filters to loosen.
-- **Infinite-scroll traps, and how each is handled:** the list keeps every loaded batch in the Query cache and the router restores scroll position, so going back doesn't lose your place; there is no footer under the list to chase; a "Back to top" button appears once you've scrolled past the first screen with more than one batch loaded, and moves focus to the page heading (smooth scrolling only when reduced motion isn't requested); and a visible "Load more" button works for keyboard and screen-reader users. It stays mounted while loading ("Loading…", `aria-disabled`) and becomes "Retry" after a failure, so focus is never dropped; when the last batch arrives, focus moves to "End of results". The list is not virtualised; off-screen cards skip layout and paint instead (see [N+1, rate limiting & caching](#n1-rate-limiting--caching-prd)).
-- **Watch toggle** (`web/src/features/watchlist/useToggleWatch.ts`): the card changes at once in every cached list (search batches and the watchlist). Each click sends the state it wants, and clicks for one property share a TanStack Query mutation `scope`, so they run one at a time in click order and a PUT and DELETE can't finish out of order. If a request fails and no later click is queued, the card goes back to the last state the server confirmed and a toast says so. Signed-out users go to `/login?next=…` and come back to the same page.
-- **Unwatching on the watchlist page keeps the card in place** (now showing "Watch", so one click undoes it) and marks the watchlist stale; it refreshes on your next visit.
-- **Toasts by default** (`web/src/components/ui/Toaster.tsx`): sign in/up/out confirmations, form-wide login and signup errors, a failed watch, and sign-outs. Field errors stay next to their input, and a search that fails to load stays on the page with its Retry. The toast region is always in the DOM with `aria-live="polite"`, so screen readers announce new toasts. Toasts last 5 s (errors 10 s) and pause while hovered or focused.
-- **Logout** stays on a public page (filters kept) and leaves `/watchlist` for search. If the logout request fails, the app says so and keeps you signed in, since the cookie may still be valid; a 401 counts as already signed out.
-- **Cross-tab sign-out:** logout posts `signed-out` on a `BroadcastChannel('auth')`. Other tabs clear the user's data (user, watchlist, `watched` flags) and show "You were signed out in another tab"; a tab on `/watchlist` goes to `/login?next=/watchlist`, and a tab on search stays where it is in its signed-out view. A tab that was already signed out shows nothing.
-- **Accessibility:** the watch button is a toggle (`aria-pressed`) whose name starts with its visible text ("Watch"/"Watching") followed by the address; selected property-type chips show a tick, not just a colour.
-- **Performance:** cards are memoised and a toggle replaces only that property's object in the cache, so one click re-renders one card. Routes are code-split (`lazyRouteComponent`).
-- A click cancels any list fetch already in flight before patching the cache, because that fetch copied the pages before the click and would write them back over it (TanStack Query's standard optimistic-update step). A cancelled next batch goes back to its earlier state and the sentinel asks for it again.
-- Trade-off: filters have no mobile drawer yet; they wrap instead.
+- Filters live only in the URL, checked by a zod schema that quietly drops invalid values instead of
+  sending a request the API would reject.
+- One `InfiniteResults` list serves search and the watchlist. It loads the next batch 600 px before
+  the end and has a "Load more" button for keyboard users, skeletons, inline Retry, an end marker and
+  "Back to top". Every loaded batch stays cached, so Back returns to the same place.
+- The watch toggle changes the card at once. Clicks for one property run in order, and a failure goes
+  back to the last state the server confirmed, with a toast.
+- Toasts by default; field errors and a search that fails to load stay on the page.
+- Accessibility: the watch button is a real toggle (`aria-pressed`), toasts are announced
+  (`aria-live`), and selected chips show a tick, not just a colour.
+- Details: [docs/features/search.md](docs/features/search.md) and
+  [docs/features/watchlist.md](docs/features/watchlist.md).
 
 ### N+1, rate limiting & caching ([PRD](PRD.md#non-functional-requirements))
 
-- `bullet` is in the development and test groups: it logs in development and raises in the test suite (`Bullet.raise = true`), so any request spec with an N+1 fails. `spec/config/bullet_spec.rb` proves it still raises.
-- rack-attack is the only limiter (no Rails 8 `rate_limit`). Login and signup use the scaffold's `auth/ip` throttle (10/min per IP), returning 429 with the shared error shape and `Retry-After`. It gets its own `Rack::Attack.cache.store` (Redis in dev/prod, `MemoryStore` in test), since the test `Rails.cache` is a null store.
-- **Per-route throttles** (`api/config/initializers/rack_attack.rb`), all returning the same 429 body with `Retry-After`:
+- `bullet` raises in the test suite, so any request spec with an N+1 query fails.
+- rack-attack is the only rate limiter. Every rule returns 429 with the shared error shape and
+  `Retry-After`:
 
   | Rule | Limit | Keyed by |
   | ---- | ----- | -------- |
   | `api/ip` | 300 per 5 min, every `/api/*` request | client IP |
   | `auth/ip` | 10 per min, login and signup | client IP |
-  | `search/ip` | 120 per min, `GET /properties` (bursts; `api/ip` caps the sustained rate) | client IP |
-  | `watchlist/user` | 60 per min, `PUT`/`DELETE /watchlist/:id` (reads don't count) | user id from the JWT, checked in the middleware without a DB query |
+  | `search/ip` | 120 per min, `GET /properties` | client IP |
+  | `watchlist/user` | 60 per min, watchlist writes | user id from the JWT, no DB query |
 
-  The web app says so: a rate-limited search or next batch shows "Too many requests in a short time" with Retry (it isn't retried automatically), and a rate-limited watch click rolls back with its own toast. `search/ip` also counts `HEAD` and the `.json` suffix.
-- **Cached counts:** `totalCount` (first batch only) comes from `Rails.cache` (Redis) for 60 s, keyed by the parsed filters that change it (not the cursor, limit or user) and by `SearchCache.version`. Every property create, update or delete bumps that version after commit, so all cached counts miss at once; the seed bumps it too, since `insert_all` skips callbacks.
-- **No custom ETag on search.** Rails' default `Rack::ETag` hashes the rendered body, and `Rack::ConditionalGet` answers `304 Not Modified` when it matches, so a repeat search saves the transfer but still runs the query. Because the ETag is the body's own hash, a 304 can never hand a browser a body from older code or older data. An ETag computed before the query (from the data version, the user, their watchlist and the params) would also have skipped the query, but it needed a hand-bumped version or a deploy revision to notice code changes; forgetting either would serve old bodies, so it was dropped for the simpler default. `Cache-Control: private, max-age=0, must-revalidate`, so browsers revalidate every time and shared caches never store it.
-- **Property types** are a constant list served with `Cache-Control: public, max-age=3600` rather than copied into Redis.
-- **No list virtualisation.** Each result card has `content-visibility: auto`, so the browser skips layout and paint for cards far off screen, while every card stays in the DOM, in find-in-page and in the screen-reader list. Its placeholder height is a formula that matches the real card (a 3:2 photo as wide as the grid cell plus a 190 px text block, measured from the list's own width with container units; within a few pixels of the real card at phone, tablet and desktop widths), so Back lands on the same card. Only the height is set: a placeholder width would widen the single phone column. TanStack Virtual would have needed row chunking for the responsive grid, fought router scroll restoration, and hidden off-screen cards from find-in-page and assistive tech; it would pay off at thousands of cards, not hundreds.
-- Known gaps: if Redis loses a search cache version bump, cached counts can be stale for up to 60 s (a failed bump is reported); writes that skip callbacks (`update_all`, `insert_all`, `delete`) don't bump it, and nothing in the app uses them on properties outside the seed; in Docker Compose every browser shares one IP bucket for `search/ip` too.
+- Search's `totalCount` is cached in Redis for 60 s, keyed by the filters and a version that every
+  property change bumps.
+- Search uses Rails' default ETag (a hash of the body): a 304 saves the transfer and can never serve
+  an old body. A custom ETag that also skipped the query was tried and dropped.
+- Long lists aren't virtualised: each card has `content-visibility: auto`, so off-screen cards skip
+  layout and paint but stay findable and readable by screen readers.
+- Why each choice, and the known gaps: [docs/features/performance.md](docs/features/performance.md).
 
 ## Notes from a JS/TS developer learning Rails
 
