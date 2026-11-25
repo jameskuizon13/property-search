@@ -1,15 +1,13 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { delay, http, HttpResponse } from 'msw'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { signedIn, signedOut } from '@/test/authHandlers'
 import { scrollSentinelIntoView } from '@/test/intersectionObserver'
 import { makeProperty, page, serverError } from '@/test/propertyHandlers'
 import { renderApp } from '@/test/renderApp'
 import { server } from '@/test/server'
 import { toasts } from '@/test/utils'
-
-vi.mock('@/lib/cable', () => ({ disconnectConsumer: vi.fn(), getConsumer: vi.fn() }))
 
 const smithSt = makeProperty({ id: 42, streetAddress: '12 Smith St', watched: false })
 

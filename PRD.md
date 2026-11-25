@@ -127,7 +127,7 @@ Each requirement below has acceptance criteria a test can check.
 - The card and any cached result batch update in place. A toast reads, for example, “12 Smith St: $850k → $820k”.
 - Updates apply in order. Each property carries a `version` (its `lock_version`, which Rails bumps on every save) in the REST shape and in the cable payload, and the client applies an update only if its `version` is newer than the cached card's. A late or repeated message can't put an older price back. (Writes that skip callbacks, like `update_columns`, don't bump it; nothing in the app uses them on properties.)
 - A card whose new status no longer matches the current filters (for example, it just sold) stays in the list with its new badge until the next refetch, instead of vanishing under the user's cursor. Noted in the README.
-- A rake task `demo:simulate_changes` changes random watched properties so reviewers can see it work. `demo:change_property[id,price=…|status=…]` changes one property on demand. Edits made in the admin screen trigger the same update.
+- A rake task `demo:simulate_changes` changes random watched properties so reviewers can see it work. `demo:change_property[id,price=…|status=…]` changes one property on demand, and `demo:watched[email]` lists the ids a user watches so the README can point at a real one. Edits made in the admin screen trigger the same update.
 
 **FR-7 Admin property management (nice to have, Milestone 8)**
 
@@ -274,14 +274,14 @@ Each signed-in user subscribes to one stream, `WatchlistChannel`, scoped to that
 1. **Inside the transaction:** `Property` has an `after_update` callback. If `price_cents` or `status` changed, it writes a `property_events` row. The new price and its log entry are saved together or not at all, so the history can never miss a change.
 2. **After commit:** an `after_update_commit` callback calls `PropertyChangeNotifier.call(property)`. Watchers are only told about changes that are really saved, never about one that gets rolled back.
 3. `PropertyChangeNotifier` walks the watcher `user_id`s with the `property_id` index and calls `WatchlistChannel.broadcast_to(user, payload)` inline. There's no background job: each broadcast is a Redis publish of about 1 ms, and running inline means changes made from a rake task or `rails console` are delivered before the process exits.
-4. The payload is `{ type: "property.updated", property: <same serializer as REST>, changes: { price_cents: [old, new] } }`. Reusing the REST shape means the client can drop it straight into its cache. The REST serializer reads `watched` from the search query's `LEFT JOIN`, which a plain `Property` loaded by the notifier doesn't have, so `PropertyChangeNotifier` passes `watched: true` as serializer params. That is always correct, because only watchers receive the broadcast.
+4. The payload is `{ type: "property.updated", property: <same serializer as REST>, changes: { priceCents: [old, new], status: [old, new] } }` (only the keys that changed, camelCase like every JSON key). Reusing the REST shape means the client can drop it straight into its cache. The REST serializer reads `watched` from the search query's `LEFT JOIN`, which a plain `Property` loaded by the notifier doesn't have, so `PropertyChangeNotifier` passes `watched: true` as serializer params. That is always correct, because only watchers receive the broadcast.
 5. `ApplicationCable::Connection` identifies `current_user` from the same auth used by REST and rejects anonymous connections.
-6. On the client, one `useWatchlistChannel` hook (mounted once in the root layout) calls `queryClient.setQueriesData` on every `['properties', …]` and `['watchlist', …]` cache holding that id, skipping any entry whose `version` is already the same or newer. It pushes a toast into a Jotai atom only when it applied the update.
-7. When the socket reconnects, the client invalidates the watchlist queries, so changes missed while offline are picked up.
+6. On the client, one `useWatchlistChannel` hook (mounted once in the root layout) cancels in-flight fetches of the lists that show the card (not lists still on their first load), then calls `queryClient.setQueriesData` on every `['properties', …]` and `['watchlist', …]` cache holding that id, skipping any card whose `version` is already the same or newer and keeping the card's own `watched` flag. It pushes a toast into a Jotai atom once per new version, also when no list on that tab holds the card, and never for a message older than the cached card.
+7. When the socket reconnects (`connected({ reconnected: true })`), the client refetches the watchlist and marks search batches stale, so changes missed while offline are picked up.
 
 ```ruby
 class Property < ApplicationRecord
-  after_update        :record_change_event, if: :price_or_status_changed?  # same transaction
+  after_update        :record_change_events, if: :price_or_status_changed? # same transaction; one row per changed attribute
   after_update_commit :notify_watchers,     if: :price_or_status_changed?  # after commit
 
   private

@@ -17,6 +17,11 @@ class PropertyResource
   attribute(:latitude) { |property| property.latitude&.to_f }
   attribute(:longitude) { |property| property.longitude&.to_f }
 
+  # lock_version, which Rails bumps on every save. Live updates carry it too,
+  # and the client applies one only if it is newer than the card it has, so a
+  # late or repeated message can never put an older price back.
+  attribute(:version, &:lock_version)
+
   attribute :watched do |property|
     params.fetch(:watched) { property.has_attribute?(:watched) && property.watched }
   end

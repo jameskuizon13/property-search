@@ -21,5 +21,16 @@ export type Property = {
   imageUrl: string | null
   latitude: number | null
   longitude: number | null
+  /** The property's `lock_version`: live updates apply only when newer than the cached card's. */
+  version: number
   watched: boolean
+}
+
+/** What `WatchlistChannel` sends when a watched property's price or status changes. */
+export type PropertyUpdatedMessage = {
+  type: 'property.updated'
+  /** The REST shape; `watched` is always true (only watchers receive it). */
+  property: Property
+  /** Only the attributes that changed, as `[old, new]`. */
+  changes: { priceCents?: [number | null, number | null]; status?: [PropertyStatus, PropertyStatus] }
 }

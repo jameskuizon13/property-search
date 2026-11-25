@@ -5,9 +5,9 @@ Users search Australian listings, filter by price, bedrooms and property type, s
 results that keep loading, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
-**Status: Milestones 1–5 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API; the search and watchlist UI). The work is split into numbered **milestones**
+**Status: Milestones 1–6 are built** (auth and minimum security; property data and seeds; the search API; the watchlist API; the search and watchlist UI; live watchlist updates). The work is split into numbered **milestones**
 (build steps that each end with something that runs, passing specs and an updated README; listed in [Build progress](#build-progress) and [PRD.md](PRD.md#delivery-plan-risks--open-questions)).
-A label like _(Milestone 6)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
+A label like _(Milestone 7)_ means that part is planned but not built yet. The full plan is in [PRD.md](PRD.md).
 
 > The brief asked for Jest. Tests use **Vitest** (same API as Jest) with React Testing Library
 > instead, because Vitest reuses the Vite config, so there is no separate Babel/SWC transform to maintain.
@@ -239,12 +239,13 @@ Nothing needs copying: every value has a default in code that matches the Docker
 | `api/app/models` | ActiveRecord models: `User`, `Property`, `PropertyEvent`, `WatchlistItem` |
 | `api/app/controllers` | API controllers under `/api/v1` |
 | `api/db/seeds.rb`, `api/db/seeds/` | Demo accounts, `PropertyGenerator`, `suburbs.csv` (real suburb/postcode pairs) |
-| `api/app/channels` | ActionCable connection auth _(Milestone 1)_; `WatchlistChannel` _(Milestone 6)_ |
-| `api/app/services` | `AuthToken` (JWT issue/verify, cookie options) |
+| `api/app/channels` | ActionCable connection auth; `WatchlistChannel` (one stream per signed-in user) |
+| `api/app/services` | `AuthToken` (JWT issue/verify, cookie options); `PropertyChangeNotifier` (live-update fan-out) |
+| `api/lib/tasks` | `demo:*` tasks for live updates; `search:explain` |
 | `api/app/queries` | `Properties::SearchQuery` (filters, sort, validation, keyset paging), `Properties::Cursor`; `Watchlist::ListQuery` and `Watchlist::Cursor` (the user's watchlist, newest added first) |
 | `api/config/pagination.yml` | Default and maximum `limit` (`PAGINATION_DEFAULT_LIMIT`, `PAGINATION_MAX_LIMIT`) |
 | `api/app/resources` | Alba serializers |
-| `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `support/` |
+| `api/spec` | RSpec: `requests/`, `models/`, `services/`, `channels/`, `tasks/`, `support/` |
 | `web/src/features` | Feature code: `auth/`, `properties/`, `watchlist/` |
 | `web/src/routes` | TanStack Router routes |
 | `web/src/lib` | API client, cable consumer, Query client, query-key factory |
@@ -286,23 +287,34 @@ there also requires `SEED_DEMO_PASSWORD`, so the published password is never use
   names from its default locale don't look Australian. `image_url` is left empty; the UI shows a
   placeholder.
 
-## Trying the live updates _(available from Milestone 6)_
+## Trying the live updates
 
-1. Open the app in two browser windows and sign in as `demo@example.com` in both.
-2. Watch a property from the search page.
-3. Change that property from a terminal in `api/` (`<id>` is a placeholder; TODO: fill in a known id once the seed exists):
+1. Open the app in two browser windows (or a normal and a private one) and sign in as
+   `demo@example.com` in both. "Live" with a green dot by your name means the live connection is up.
+2. Watch a property or two from the search page.
+3. From a terminal in `api/`, find the ids you watch and change one:
 
 ```bash
-bin/rails "demo:change_property[<id>,price=820000]"
-bin/rails "demo:change_property[<id>,status=sold]"
+bin/rails demo:watched
 ```
 
-Both windows should update the card in place and show a toast within about a second.
-To change random watched properties instead:
+```bash
+bin/rails "demo:change_property[42,price=820000]"
+```
+
+`42` stands for an id from the list. The change can also be `price=withheld` or
+`status=for_sale|under_offer|sold|withdrawn`; prices are whole dollars ($1,000 to $1 billion).
+Bad input exits with status 1 and a usage message.
+
+Both windows update the card in place and show a toast such as "12 Smith St: $850k → $820k"
+within about a second (a window that isn't showing that card still gets the toast). To change random watched properties instead (`COUNT`, default 3):
 
 ```bash
 bin/rails demo:simulate_changes
 ```
+
+With everything in Docker (`make up`), prefix each command with `docker compose exec api`, e.g.
+`docker compose exec api bin/rails demo:watched`.
 
 A card whose new status no longer matches the current filters (e.g. it just sold) stays in the
 list with its new badge until the next refetch, rather than vanishing under the cursor.
@@ -353,7 +365,14 @@ Known, accepted gaps (Milestone 1):
 - `Property#after_update` (runs inside the save's transaction) writes a `property_events` row alongside the price/status change, so history can't miss a change.
 - `after_update_commit` (runs only after the transaction commits) calls `PropertyChangeNotifier`, so watchers only hear about changes that were actually saved.
 - Broadcasts run inline, with no job: each is a ~1 ms Redis publish, and inline delivery also works from rake tasks and the console. At scale it would move to a Solid Queue job with retries.
-- One per-user `WatchlistChannel` stream instead of one per property: one subscription per user, and a user can only ever receive their own stream.
+- One per-user `WatchlistChannel` stream instead of one per property: one subscription per user, and a user can only ever receive their own stream. Subscription params are ignored, and the channel has no actions (`subscribed` is private, so a client can't re-run it).
+- The message is `{ type: "property.updated", property, changes }`: `property` is the same shape as REST (with `watched: true`, since only watchers get it) and `changes` holds `[old, new]` for `priceCents` and/or `status`. A save that changes both writes two event rows and sends one message.
+- **Ordering:** every property carries a `version` (its `lock_version`, bumped on each save) in REST and in the message. The client (`useWatchlistChannel`, mounted once in the root layout) replaces a cached card only when the message's `version` is newer than **that card's**, checked per cached copy, so a late or repeated message never puts an older price back, even when search and the watchlist hold different versions. It toasts each new version once per tab, also when no list on that tab holds the card, and never for a message older than what it already shows. Close prices are written in full ("$2,005,000 → $2,000,000") rather than as two identical short forms.
+- The patch keeps the card's own `watched` flag (a watch click still in flight decides that). Before patching, it cancels batches already loading for lists that show the card, as the watch toggle does, so an older response can't land on top of it; a list still on its first load is left alone, since cancelling it would leave it stuck on its skeletons.
+- If Redis is down after a change commits, the error is reported and the save still succeeds; watchers see the new values on their next refetch.
+- **Reconnects:** ActionCable retries by itself. After a *re*connect the watchlist refetches and search batches are marked stale (refreshed on their next view, not all at once), since updates sent while the socket was down are gone. A live update that arrives mid-refetch restarts that refetch rather than cancelling it for good. A dot and a word by the user's name show the state ("Live", "Connecting…", "Offline"); if the server refuses the socket (for example the cookie expired), it reads "Offline".
+- Demo tasks (`api/lib/tasks/demo.rake`) use `update!`, so they go through the same callbacks an admin edit will. The seed uses `insert_all` on purpose, so seeding broadcasts nothing.
+- Trade-off: a sign-out anywhere disconnects that user's sockets everywhere (see Auth); other devices reconnect and refetch their watchlist, which is harmless.
 
 ### Search & pagination ([PRD](PRD.md#api-design))
 
@@ -373,7 +392,7 @@ Known, accepted gaps (Milestone 1):
 - Partial btree indexes (an index over only the rows matching a `WHERE`, so it stays small) `WHERE status IN ('for_sale', 'under_offer')`, matching the `Property.active` scope exactly: `(listed_at DESC, id DESC)` for newest, `(price_cents, id)` (also `price_cents IS NOT NULL`) for both price sorts, `(property_type, bedrooms)` for narrow filters.
 - Free-text `q`: GIN `gin_trgm_ops` on `suburb` and `street_address` (`ILIKE '%q%'`), plus a `text_pattern_ops` btree on `postcode` for prefix matching (`LIKE 'q%'`, so `30` finds `3065`).
 - **Extended statistics** on `(property_type, bedrooms)` (`CREATE STATISTICS … (mcv)`). See the villas case below for why. `schema.rb` can't record them, so the seed also creates them (`IF NOT EXISTS`) for databases loaded from `schema.rb`.
-- Every `properties` index appears in at least one plan below, so none was dropped. (`watchlist_items(property_id)` and the `property_events` index serve Milestone 6.)
+- Every `properties` index appears in at least one plan below, so none was dropped. (`watchlist_items(property_id)` serves the live-update fan-out; the `property_events` index serves change history.)
 - `watchlist_items (user_id, created_at DESC, id DESC)` serves `GET /watchlist`: an index scan with `Index Cond: user_id = … AND ROW(created_at, id) < ROW(…)` and no sort, then a primary-key lookup per row on `properties`. Checked by hand with 20k watchlist rows across 50 users (in a rolled-back transaction; the seed creates no watchlist rows, so there's no committed plan to reproduce). With only a few hundred rows Postgres prefers a sequential scan, which is fine at that size. The unique `(user_id, property_id)` index enforces one row per property and serves the `watched` join.
 
 #### EXPLAIN evidence
@@ -437,7 +456,7 @@ Every piece of state has exactly one owner, picked by where it has to survive:
 | --- | --- | --- | --- |
 | Server state | TanStack Query | search batches, the watchlist, `/me`, the property-type labels | It's a copy of the server's data: Query owns caching, refetching, de-duplicating requests, cancelling stale ones and optimistic updates, which would all be hand-written in a client store. |
 | URL state | TanStack Router search params, validated by `searchSchema` (zod) in `validateSearch` | `q`, min/max price, beds, property types, the two "exclude" toggles, sort | Filters must survive refresh, back/forward and a shared link. In the URL they do with no sync code. Cursors stay in the Query cache, not the URL. |
-| Client state | Jotai | toasts (cable status joins in Milestone 6) | Small, app-wide UI state with no server copy. One atom per concern, so a toast never re-renders the results grid. |
+| Client state | Jotai | toasts, the live-connection status | Small, app-wide UI state with no server copy. One atom per concern, so a toast never re-renders the results grid. |
 
 - Filters are never copied into Jotai or `useState`: the page reads them from the URL and writes them back with `navigate`. The only local copy is the text box while you type, which writes to the URL 300 ms after the last keystroke (with `replace`, so typing doesn't fill the history).
 - The search query key is the normalised filter object (`propertyKeys.list(filters)` in `web/src/lib/queryKeys.ts`), so a filter change is a new cache entry starting from the first batch, and going back to earlier filters reuses their cached batches.
@@ -479,7 +498,7 @@ Milestones 8–9 are nice-to-haves.
 | 3  | Search API | ~40 min | [x] |
 | 4  | Watchlist API | ~15 min | [x] |
 | 5  | Search & watchlist UI | ~50 min | [x] |
-| 6  | Real-time | ~25 min | [ ] |
+| 6  | Real-time | ~25 min | [x] |
 | 7  | Performance & bonus | leftover buffer | [ ] |
 | 8  | Admin UI for properties (nice to have) | ~55 min | [ ] |
 | 9  | Security hardening & extras (nice to have) | documented only | [ ] |

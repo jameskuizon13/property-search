@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { useToast } from '@/components/ui/toast'
-import { findCachedProperty, patchCachedProperty } from '@/features/properties/cache'
+import { cancelListsHolding, findCachedProperty, patchCachedProperty } from '@/features/properties/cache'
 import { ApiError } from '@/lib/api'
-import { propertyKeys, watchlistKeys } from '@/lib/queryKeys'
+import { watchlistKeys } from '@/lib/queryKeys'
 import { unwatchProperty, watchProperty } from './api'
 
 /**
@@ -48,13 +48,10 @@ export function useToggleWatch(propertyId: number) {
         confirmed.set(propertyId, findCachedProperty(queryClient, propertyId)?.watched ?? !watch)
       }
       // A batch already loading copied the pages before this click and would
-      // write them back over the patch, undoing it. Cancelling sends it back
-      // to its earlier state; the list's sentinel then asks for it again.
-      await Promise.all([
-        queryClient.cancelQueries({ queryKey: propertyKeys.lists() }),
-        queryClient.cancelQueries({ queryKey: watchlistKeys.all }),
-      ])
+      // write them back over the patch, undoing it (see cancelListsHolding).
+      const resume = await cancelListsHolding(queryClient, propertyId)
       patchCachedProperty(queryClient, propertyId, { watched: watch })
+      resume()
     },
     onSuccess: (_data, watch) => {
       confirmed.set(propertyId, watch)
