@@ -1,7 +1,7 @@
 class CreatePropertyEvents < ActiveRecord::Migration[8.1]
   def change
     # Change log for price and status (Domain's Shortlist alerts). Written in
-    # the same transaction as the change itself (Batch 6), so history can never
+    # the same transaction as the change itself (Milestone 6), so history can never
     # miss one. Append-only: no updated_at.
     create_table :property_events do |t|
       t.references :property, null: false, index: false, foreign_key: { on_delete: :cascade }
