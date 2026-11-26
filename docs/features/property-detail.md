@@ -140,7 +140,9 @@ cents (null when withheld, and **always** null while the property's price is wit
   opens the property page. Hover now gives the card a stronger shadow and a darker border and zooms
   the photo 3% (`motion-safe`, so not for reduced motion).
   _Rejected:_ keeping the underline (it marks the address as its own destination); lifting the card
-  a few pixels (jumpy across a dense grid, and the zoom already says "clickable").
+  a few pixels (jumpy across a dense grid, and the zoom already says "clickable"); a background
+  tint, Material-style (listing sites don't, the photo leaves only the text strip to tint so the
+  card reads as two parts, and the small grey type label drops to about 4.5:1 contrast).
 
 ## Known gaps
 
