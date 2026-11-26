@@ -4,8 +4,8 @@
 
 When a watched property's price or status changes, every open tab of each user watching it
 updates the card in place within about a second and shows a toast such as
-"12 Smith St: $850k → $820k". Each change is also logged in `property_events`. A dot by the user's
-name shows the socket state ("Live", "Connecting…", "Offline"). Rake tasks change properties on
+"12 Smith St: $850k → $820k". Each change is also logged in `property_events`. The connection
+state isn't shown anywhere (see the 2026-11-26 decision). Rake tasks change properties on
 demand so the feature can be seen without an admin screen (steps in the README, "Trying the live
 updates").
 
@@ -22,7 +22,7 @@ updates").
 | `web/src/features/watchlist/useWatchlistChannel.ts` | Subscribes while signed in (mounted once in `RootLayout`); applies updates, toasts, handles reconnects |
 | `web/src/features/properties/cache.ts` | `applyPropertyUpdate`, `cancelListsHolding`, `findCachedProperty`; each covers the open property page too |
 | `web/src/features/properties/format.ts` | `describeChanges`, `formatCompactPrice` for the toast |
-| `web/src/lib/cable.ts`, `cableStatus.ts` | The consumer; the status atom for the header dot |
+| `web/src/lib/cable.ts` | The consumer |
 | `web/src/test/cable.ts` | The fake consumer used by the web tests |
 
 Message: `{ type: "property.updated", property: <REST shape, watched: true>, changes: { priceCents?: [old, new], status?: [old, new] } }`.
@@ -79,6 +79,12 @@ A save that changes both price and status writes two event rows and sends one me
   next refetch, rather than vanishing under the cursor.
 - **2026-11-25: `demo:watched` added** so the README can point at a real id instead of a
   placeholder (seed ids change on every reseed).
+- **2026-11-26: Removed the connection status from the header** (reverses the 2026-11-25 status
+  dot entry). Nothing in the app changes a price or status yet (only the rake tasks; the admin
+  screen isn't built), so a green "Live" promised updates a normal user would never see, and it
+  wasn't clear what it meant. _Rejected:_ showing it only when reconnecting or offline, which would keep a
+  hint for reviewers running the rake tasks; dropped to keep the header clean for now. Bring it back,
+  probably in that warn-only form, once the admin screen makes changes visible in the app.
 
 ## Known gaps
 
@@ -86,6 +92,8 @@ A save that changes both price and status writes two event rows and sends one me
   refetch, which is harmless.
 - An open socket outlives its token (see [auth.md](auth.md)).
 - Writes that skip callbacks (`update_all`, `update_columns`) don't notify anyone.
+- Nothing tells the user when the socket is down. After an expired cookie, updates stop silently
+  until the page is refreshed (a reconnect still refetches what was missed).
 
 ## How to check it
 

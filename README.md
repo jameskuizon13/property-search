@@ -400,7 +400,7 @@ cache helpers, and the search results show the watchlist's `WatchButton`.
 ## Trying the live updates
 
 1. Open the app in two browser windows (or a normal and a private one) and sign in as
-   `demo@example.com` in both. "Live" with a green dot by your name means the live connection is up.
+   `demo@example.com` in both.
 2. Watch a property or two from the search page.
 3. From a terminal in `api/`, find the ids you watch and change one:
 

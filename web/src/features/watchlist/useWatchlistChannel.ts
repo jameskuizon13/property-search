@@ -1,5 +1,4 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { useToast } from '@/components/ui/toast'
 import { useMe } from '@/features/auth/useMe'
@@ -7,7 +6,6 @@ import { applyPropertyUpdate, cancelListsHolding, newestCachedVersion } from '@/
 import { describeChanges } from '@/features/properties/format'
 import type { PropertyUpdatedMessage } from '@/features/properties/types'
 import { getConsumer } from '@/lib/cable'
-import { cableStatusAtom } from '@/lib/cableStatus'
 import { propertyKeys, watchlistKeys } from '@/lib/queryKeys'
 
 function isPropertyUpdate(message: unknown): message is PropertyUpdatedMessage {
@@ -46,15 +44,12 @@ export function useWatchlistChannel() {
   const userId = user?.id
   const queryClient = useQueryClient()
   const toast = useToast()
-  const setStatus = useSetAtom(cableStatusAtom)
 
   useEffect(() => {
     if (userId === undefined) return
 
-    setStatus('connecting')
     const subscription = getConsumer().subscriptions.create('WatchlistChannel', {
       connected({ reconnected }: { reconnected: boolean }) {
-        setStatus('connected')
         if (!reconnected) return
         // Updates sent while the socket was down are gone: refetch the
         // watchlist and any open property page, and mark search stale so it
@@ -62,13 +57,6 @@ export function useWatchlistChannel() {
         void queryClient.invalidateQueries({ queryKey: watchlistKeys.all })
         void queryClient.invalidateQueries({ queryKey: propertyKeys.details() })
         void queryClient.invalidateQueries({ queryKey: propertyKeys.lists(), refetchType: 'none' })
-      },
-      disconnected({ willAttemptReconnect }: { willAttemptReconnect: boolean }) {
-        // false: the server refused us (e.g. the cookie expired) or we closed it.
-        setStatus(willAttemptReconnect ? 'connecting' : 'disconnected')
-      },
-      rejected() {
-        setStatus('disconnected')
       },
       async received(message: unknown) {
         if (!isPropertyUpdate(message)) return
@@ -91,9 +79,8 @@ export function useWatchlistChannel() {
 
     return () => {
       subscription.unsubscribe()
-      setStatus('disconnected')
       // The next user to sign in on this tab starts with a clean slate.
       announcedByClient.delete(queryClient)
     }
-  }, [userId, queryClient, toast, setStatus])
+  }, [userId, queryClient, toast])
 }
