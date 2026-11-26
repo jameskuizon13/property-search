@@ -42,6 +42,8 @@ cents (null when withheld, and **always** null while the property's price is wit
   readers hear one link per card, named by the address, and the whole card is still clickable.
   The Watch button sits above it (`relative z-10`) so it toggles instead of opening the page. Don't
   wrap the card in a link: a button inside a link is invalid HTML and breaks keyboard use.
+- **Hover marks the whole card, never the address alone:** a stronger shadow, a darker border and
+  a slight photo zoom (skipped for reduced motion). No underline on the address.
 - **The detail response is the search shape plus fields,** so the page can start from a cached card
   (placeholder data) and the same cache helpers patch both. `description` and `history` stay out of
   `PropertyResource`, which search, the watchlist and live updates all send.
@@ -132,6 +134,13 @@ cents (null when withheld, and **always** null while the property's price is wit
   withheld amount (earlier events give the same number away).
 - **2026-11-26: `historyComplete` from one extra row** (`LIMIT 21`), so the page can say "Earlier
   changes aren't shown" instead of a cut-off list that looks complete.
+
+- **2026-11-26: The card's hover is the whole card, not an underlined address.** The user found
+  that underlining only the address made it look like a link to Google Maps, when the whole card
+  opens the property page. Hover now gives the card a stronger shadow and a darker border and zooms
+  the photo 3% (`motion-safe`, so not for reduced motion).
+  _Rejected:_ keeping the underline (it marks the address as its own destination); lifting the card
+  a few pixels (jumpy across a dense grid, and the zoom already says "clickable").
 
 ## Known gaps
 
