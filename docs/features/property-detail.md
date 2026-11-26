@@ -51,8 +51,9 @@ cents (null when withheld, and **always** null while the property's price is wit
   readers hear one link per card, named by the address, and the whole card is still clickable.
   The Watch button sits above it (`relative z-10`) so it toggles instead of opening the page. Don't
   wrap the card in a link: a button inside a link is invalid HTML and breaks keyboard use.
-- **Hover marks the whole card, never the address alone:** a stronger shadow, a darker border and
-  a slight photo zoom (skipped for reduced motion). No underline on the address.
+- **Hover marks the whole card, never the address alone, and must tell it apart from its
+  neighbours at a glance:** a 2 px indigo outline, a 4 px lift, a deeper shadow and a 5% photo zoom
+  (lift and zoom skipped for reduced motion). No underline on the address.
 - **The detail response is the search shape plus fields,** so the page can start from a cached card
   (placeholder data) and the same cache helpers patch both. `description` and `history` stay out of
   `PropertyResource`, which search, the watchlist and live updates all send.
@@ -222,6 +223,16 @@ cents (null when withheld, and **always** null while the property's price is wit
   a few pixels (jumpy across a dense grid, and the zoom already says "clickable"); a background
   tint, Material-style (listing sites don't, the photo leaves only the text strip to tint so the
   card reads as two parts, and the small grey type label drops to about 4.5:1 contrast).
+- **2026-11-26: A stronger card hover: an indigo outline and a lift** (reverses "lifting the card"
+  above). The user found that in the grid the hovered card still wasn't clearly the one under the
+  mouse: a darker grey border, a bigger shadow and a 3% zoom are too faint on a pale page. Hover now
+  adds a 2 px indigo-400 outline (border plus a 1 px ring), lifts the card 4 px, uses `shadow-xl`
+  and zooms the photo 5%. The keyboard focus ring stays the stronger 2 px indigo-500.
+  Other sites, checked on the day: Domain shows a single column and only reveals the photo arrows on
+  hover; Airbnb has no card frame and highlights the listing's pin on its map. We have neither a
+  photo carousel on cards nor a map, so a framed grid needs the card itself to change clearly.
+  _Rejected:_ dimming the other cards (the whole grid flickers as the mouse crosses it); the
+  background tint (see above).
 
 ## Known gaps
 

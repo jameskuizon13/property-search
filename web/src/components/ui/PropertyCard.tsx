@@ -79,11 +79,11 @@ export function PropertyCard({ property, typeLabel, from, action }: Props) {
   return (
     <article
       aria-labelledby={headingId}
-      className="group relative flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[box-shadow,border-color] duration-200 hover:border-slate-300 hover:shadow-lg has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-indigo-500"
+      className="group relative flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[box-shadow,border-color,translate] duration-200 ease-out hover:border-indigo-400 hover:shadow-xl hover:ring-1 hover:ring-indigo-400 motion-safe:hover:-translate-y-1 has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-indigo-500"
     >
       <div className="relative aspect-[3/2] overflow-hidden bg-slate-100">
         {/* The whole card reacts to hover, never the address alone: an underlined address reads as a map link. */}
-        <div className="h-full transition-transform duration-300 ease-out motion-safe:group-hover:scale-[1.03]">
+        <div className="h-full transition-transform duration-300 ease-out motion-safe:group-hover:scale-105">
           {/* One, two or three columns (see InfiniteResults); max-w-6xl caps a column near 370 px. */}
           <PropertyPhoto
             src={property.imageUrl}
