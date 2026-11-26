@@ -35,7 +35,18 @@ export function useProperty(id: number, { enabled = true } = {}) {
     queryFn: ({ signal }) => fetchProperty(id, signal),
     placeholderData: (): PropertyDetail | undefined => {
       const card = findCachedProperty(queryClient, id)
-      return card && { description: null, history: [], historyComplete: true, ...card }
+      return (
+        card && {
+          description: null,
+          history: [],
+          historyComplete: true,
+          photos: card.imageUrl ? [{ url: card.imageUrl, caption: 'Main photo' }] : [],
+          agent: null,
+          inspections: [],
+          timeZone: '',
+          ...card,
+        }
+      )
     },
   })
 }

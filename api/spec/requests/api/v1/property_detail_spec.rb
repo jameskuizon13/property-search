@@ -20,8 +20,65 @@ RSpec.describe "GET /api/v1/properties/:id", type: :request do
       priceDisplay: "$850,000", bedrooms: 3, bathrooms: 2, carSpaces: 1, landSizeSqm: 320,
       propertyType: "house", status: "for_sale", listedAt: "2026-11-01T00:00:00.000Z",
       imageUrl: "/images/properties/house-01.webp", version: 0, watched: false,
-      description: "A light-filled family home.", history: [], historyComplete: true
+      description: "A light-filled family home.", history: [], historyComplete: true,
+      photos: [ { url: "/images/properties/house-01.webp", caption: "Main photo" } ],
+      agent: nil, inspections: [], timeZone: "Australia/Melbourne"
     )
+  end
+
+  it "returns the gallery in order after the main photo, and the listing agent" do
+    agent = create(:agent, name: "Mia Chen", agency: "Laneway Property Co", phone: "0491 570 157",
+                           email: "mia.chen@example.com")
+    property.update!(agent:)
+    create(:property_photo, property:, position: 2, url: "/images/properties/bedroom-01.webp", caption: "Bedroom")
+    create(:property_photo, property:, position: 1, url: "/images/properties/kitchen-01.webp", caption: "Kitchen")
+    show
+
+    expect(json[:data][:photos].pluck(:caption)).to eq([ "Main photo", "Kitchen", "Bedroom" ])
+    expect(json[:data][:agent]).to eq(
+      id: agent.id, name: "Mia Chen", agency: "Laneway Property Co", phone: "0491 570 157",
+      email: "mia.chen@example.com"
+    )
+  end
+
+  it "has no main photo entry when the listing has no photo" do
+    property.update!(image_url: nil)
+    create(:property_photo, property:, position: 1)
+    show
+
+    expect(json[:data][:photos].pluck(:caption)).to eq([ "Kitchen" ])
+  end
+
+  it "lists upcoming open homes, soonest first, including one under way, but not past ones" do
+    travel_to(Time.zone.parse("2026-11-26 10:15:00")) do
+      create(:inspection, property:, starts_at: Time.zone.parse("2026-11-25 10:00"))
+      create(:inspection, property:, starts_at: Time.zone.parse("2026-11-29 10:00"))
+      create(:inspection, property:, starts_at: Time.zone.parse("2026-11-26 10:00"))
+      show
+    end
+
+    expect(json[:data][:inspections].map { _1.slice(:startsAt, :endsAt) }).to eq(
+      [
+        { startsAt: "2026-11-26T10:00:00.000Z", endsAt: "2026-11-26T10:30:00.000Z" },
+        { startsAt: "2026-11-29T10:00:00.000Z", endsAt: "2026-11-29T10:30:00.000Z" }
+      ]
+    )
+  end
+
+  it "lists no open homes once a listing isn't for sale, though its rows remain" do
+    create(:inspection, property:, starts_at: 2.days.from_now)
+    property.update!(status: "under_offer")
+    show
+
+    expect(json[:data][:inspections]).to eq([])
+    expect(property.inspections.count).to eq(1)
+  end
+
+  it "returns at most 6 open homes" do
+    8.times { |n| create(:inspection, property:, starts_at: (n + 1).days.from_now) }
+    show
+
+    expect(json[:data][:inspections].size).to eq(6)
   end
 
   # Changes saved together share a timestamp; the id breaks the tie, so the

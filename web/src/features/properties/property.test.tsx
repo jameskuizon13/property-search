@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { delay, http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
@@ -24,10 +24,18 @@ function detail(overrides: Partial<PropertyDetail> = {}): PropertyDetail {
     ...smithSt,
     description: 'A light-filled family home.\n\nWalk to cafes and parks.',
     history: [
-      { id: 2, kind: 'status_changed', from: 'for_sale', to: 'under_offer', createdAt: '2026-11-12T09:00:00Z' },
-      { id: 1, kind: 'price_changed', from: 85_000_000, to: 82_000_000, createdAt: '2026-11-10T09:00:00Z' },
+      { id: 2, kind: 'status_changed', from: 'under_offer', to: 'for_sale', createdAt: '2026-11-12T09:00:00Z' },
+      { id: 1, kind: 'price_changed', from: 90_000_000, to: 85_000_000, createdAt: '2026-11-10T09:00:00Z' },
     ],
     historyComplete: true,
+    photos: [
+      { url: '/images/properties/house-01.webp', caption: 'Main photo' },
+      { url: '/images/properties/kitchen-01.webp', caption: 'Kitchen' },
+      { url: '/images/properties/bedroom-02.webp', caption: 'Bedroom' },
+    ],
+    agent: { id: 7, name: 'Mia Chen', agency: 'Laneway Property Co', phone: '0491 570 157', email: 'mia.chen@example.com' },
+    inspections: [{ id: 1, startsAt: '2026-11-28T23:00:00Z', endsAt: '2026-11-28T23:30:00Z' }],
+    timeZone: 'Australia/Melbourne',
     ...overrides,
   }
 }
@@ -82,7 +90,7 @@ describe('property page', () => {
     renderApp('/properties/42')
 
     expect(await screen.findByRole('heading', { level: 1, name: '12 Smith St' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Photo of 12 Smith St' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Main photo, 12 Smith St' })).toHaveAttribute(
       'src',
       '/images/properties/house-01.webp',
     )
@@ -93,9 +101,10 @@ describe('property page', () => {
     const history = screen.getByRole('region', { name: 'Price and status history' })
     const entries = within(history).getAllByRole('listitem').map((li) => li.textContent)
     expect(entries).toEqual([
-      expect.stringContaining('Under offer (was for sale)'),
-      expect.stringContaining('Price dropped from $850,000 to $820,000'),
-      expect.stringContaining('Listed for sale'),
+      // Listed at $900,000, the oldest change's "from", not today's $850,000.
+      expect.stringContaining('Now for sale (was under offer)'),
+      expect.stringContaining('Price dropped from $900,000 to $850,000'),
+      expect.stringContaining('Listed for sale at $900,000'),
     ])
 
     expect(screen.getByRole('link', { name: /open in google maps/i })).toHaveAttribute(
@@ -411,5 +420,195 @@ describe('property page', () => {
     act(() => mixin.connected?.({ reconnected: true }))
 
     await waitFor(() => expect(loads).toBe(2))
+  })
+
+  it('steps through the photos with the buttons, the arrow keys and the thumbnails', async () => {
+    const user = userEvent.setup()
+    server.use(signedOut(), detailReturns(detail()))
+    renderApp('/properties/42')
+    const photos = await screen.findByRole('region', { name: 'Photos' })
+    const mainPhoto = () => within(photos).getAllByRole('img').find((img) => img.getAttribute('alt'))
+
+    expect(within(photos).getByText('Photo 1 of 3: Main photo')).toBeInTheDocument()
+    await user.click(within(photos).getByRole('button', { name: 'Next photo' }))
+    expect(mainPhoto()).toHaveAccessibleName('Kitchen, 12 Smith St')
+
+    await user.keyboard('{ArrowRight}')
+    expect(mainPhoto()).toHaveAccessibleName('Bedroom, 12 Smith St')
+    await user.keyboard('{ArrowRight}')
+    expect(mainPhoto()).toHaveAccessibleName('Main photo, 12 Smith St')
+
+    await user.click(within(photos).getByRole('button', { name: 'Show photo 3: Bedroom' }))
+    expect(within(photos).getByRole('button', { name: 'Show photo 3: Bedroom' })).toHaveAttribute('aria-current', 'true')
+    expect(within(photos).getByText('Photo 3 of 3: Bedroom')).toBeInTheDocument()
+
+    await user.click(within(photos).getByRole('button', { name: 'Previous photo' }))
+    expect(mainPhoto()).toHaveAccessibleName('Kitchen, 12 Smith St')
+  })
+
+  it('shows no gallery controls for a single photo', async () => {
+    server.use(signedOut(), detailReturns(detail({ photos: [{ url: '/images/properties/land-01.webp', caption: 'Main photo' }] })))
+    renderApp('/properties/42')
+    const photos = await screen.findByRole('region', { name: 'Photos' })
+
+    expect(within(photos).queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('lets a buyer call or email the agent about this listing', async () => {
+    server.use(signedOut(), detailReturns(detail()))
+    renderApp('/properties/42')
+    const agent = await screen.findByRole('region', { name: 'Contact the agent' })
+
+    expect(within(agent).getByText('Mia Chen')).toBeInTheDocument()
+    expect(within(agent).getByText('Laneway Property Co')).toBeInTheDocument()
+    expect(within(agent).getByRole('link', { name: 'Call 0491 570 157' })).toHaveAttribute('href', 'tel:+61491570157')
+    expect(within(agent).getByRole('link', { name: 'Email Mia' })).toHaveAttribute(
+      'href',
+      'mailto:mia.chen@example.com?subject=Enquiry%20about%2012%20Smith%20St%2C%20Fitzroy%20VIC%203065',
+    )
+  })
+
+  it('says so when no agent is listed', async () => {
+    server.use(signedOut(), detailReturns(detail({ agent: null })))
+    renderApp('/properties/42')
+    const agent = await screen.findByRole('region', { name: 'Contact the agent' })
+
+    expect(within(agent).getByText('No agent is listed for this property yet.')).toBeInTheDocument()
+  })
+
+  it('lists open homes, or explains why there are none', async () => {
+    server.use(signedOut(), detailReturns(detail()))
+    const { unmount } = renderApp('/properties/42')
+    const openHomes = await screen.findByRole('region', { name: 'Open homes' })
+    expect(within(openHomes).getByText('Sun 29 Nov')).toBeInTheDocument()
+    unmount()
+
+    server.use(detailReturns(detail({ inspections: [] })))
+    const second = renderApp('/properties/42')
+    expect(
+      await screen.findByText('No open homes are scheduled. Contact the agent to arrange a private inspection.'),
+    ).toBeInTheDocument()
+    second.unmount()
+
+    server.use(detailReturns(detail({ inspections: [], status: 'sold' })))
+    renderApp('/properties/42')
+    expect(await screen.findByText('No open homes: this property is sold.')).toBeInTheDocument()
+  })
+
+  it('says “Now” only for the newest status change', async () => {
+    server.use(
+      signedOut(),
+      detailReturns(
+        detail({
+          history: [
+            { id: 3, kind: 'status_changed', from: 'under_offer', to: 'for_sale', createdAt: '2026-11-20T09:00:00Z' },
+            { id: 2, kind: 'status_changed', from: 'for_sale', to: 'under_offer', createdAt: '2026-11-12T09:00:00Z' },
+          ],
+        }),
+      ),
+    )
+    renderApp('/properties/42')
+
+    expect(await screen.findByText('Now for sale (was under offer)')).toBeInTheDocument()
+    expect(screen.getByText('Changed to under offer (was for sale)')).toBeInTheDocument()
+  })
+
+  it('gives the listing price on the first line only when it is known', async () => {
+    server.use(signedOut(), detailReturns(detail({ history: [] })))
+    const first = renderApp('/properties/42')
+    // No price changes: today's price is the listing price.
+    expect(await screen.findByText('Listed for sale at $850,000')).toBeInTheDocument()
+    first.unmount()
+
+    server.use(detailReturns(detail({ history: [], priceCents: null, priceDisplay: 'Contact agent' })))
+    const withheld = renderApp('/properties/42')
+    expect(await screen.findByText('Listed for sale')).toBeInTheDocument()
+    withheld.unmount()
+
+    server.use(detailReturns(detail({ historyComplete: false })))
+    renderApp('/properties/42')
+    expect(await screen.findByText('Listed for sale')).toBeInTheDocument()
+  })
+
+  it('explains “under offer” with a button that opens and closes on demand', async () => {
+    const user = userEvent.setup()
+    server.use(signedOut(), detailReturns(detail({ status: 'under_offer' })))
+    renderApp('/properties/42')
+    const info = await screen.findByRole('button', { name: 'What does under offer mean?' })
+    const explanation = /the seller has accepted an offer/i
+
+    expect(info).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(explanation)).not.toBeInTheDocument()
+
+    await user.click(info)
+    expect(info).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText(explanation)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByText(explanation)).not.toBeInTheDocument()
+
+    await user.click(info)
+    await user.click(screen.getByRole('heading', { level: 1 }))
+    expect(screen.queryByText(explanation)).not.toBeInTheDocument()
+    expect(info).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('doesn’t show the explainer for a listing that isn’t under offer', async () => {
+    server.use(signedOut(), detailReturns(detail()))
+    renderApp('/properties/42')
+    await screen.findByRole('heading', { level: 1, name: '12 Smith St' })
+
+    expect(screen.queryByRole('button', { name: 'What does under offer mean?' })).not.toBeInTheDocument()
+  })
+
+  it('moves to the next photo on a sideways swipe, not on a scroll', async () => {
+    server.use(signedOut(), detailReturns(detail()))
+    renderApp('/properties/42')
+    const photos = await screen.findByRole('region', { name: 'Photos' })
+    const frame = within(photos).getByRole('img', { name: 'Main photo, 12 Smith St' }).parentElement!
+
+    fireEvent.pointerDown(frame, { pointerType: 'touch', clientX: 300, clientY: 100 })
+    fireEvent.pointerUp(frame, { pointerType: 'touch', clientX: 290, clientY: 220 })
+    expect(within(photos).getByText('Photo 1 of 3: Main photo')).toBeInTheDocument()
+
+    fireEvent.pointerDown(frame, { pointerType: 'touch', clientX: 300, clientY: 100 })
+    fireEvent.pointerUp(frame, { pointerType: 'touch', clientX: 200, clientY: 110 })
+    expect(within(photos).getByText('Photo 2 of 3: Kitchen')).toBeInTheDocument()
+  })
+
+  it('lists no open homes once a listing is sold, even if some come back from the API', async () => {
+    server.use(signedOut(), detailReturns(detail({ status: 'sold' })))
+    renderApp('/properties/42')
+
+    expect(await screen.findByText('No open homes: this property is sold.')).toBeInTheDocument()
+    expect(screen.queryByText('Sun 29 Nov')).not.toBeInTheDocument()
+  })
+
+  it('closes the explainer when focus moves on', async () => {
+    const user = userEvent.setup()
+    server.use(signedOut(), detailReturns(detail({ status: 'under_offer' })))
+    renderApp('/properties/42')
+    const info = await screen.findByRole('button', { name: 'What does under offer mean?' })
+
+    await user.click(info)
+    expect(info).toHaveAttribute('aria-expanded', 'true')
+    await user.tab()
+
+    expect(info).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/the seller has accepted an offer/i)).not.toBeInTheDocument()
+  })
+
+  it('says only “Listed for sale” when the price was withheld at listing', async () => {
+    server.use(
+      signedOut(),
+      detailReturns(
+        detail({
+          history: [{ id: 5, kind: 'price_changed', from: null, to: 85_000_000, createdAt: '2026-11-10T09:00:00Z' }],
+        }),
+      ),
+    )
+    renderApp('/properties/42')
+
+    expect(await screen.findByText('Price set at $850,000')).toBeInTheDocument()
+    expect(screen.getByText('Listed for sale')).toBeInTheDocument()
   })
 })

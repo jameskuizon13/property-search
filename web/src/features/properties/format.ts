@@ -32,6 +32,45 @@ export function featureParts(
   ].filter((part): part is string => !!part)
 }
 
+/** The viewer's own time zone, e.g. "Australia/Sydney". */
+const viewerTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone
+
+/**
+ * An open home in the listing's local time: { day: "Sat 29 Nov", time:
+ * "10:00 am – 10:30 am" }. When the viewer is in another zone it adds the
+ * zone and the start in the viewer's own time ("10:00 am – 10:30 am AWST
+ * (1:00 pm your time)"), so a Perth open home never reads as Sydney time and
+ * nobody has to know what AWST means.
+ */
+export function formatOpenHome(
+  { startsAt, endsAt }: { startsAt: string; endsAt: string },
+  timeZone: string,
+  viewerZone = viewerTimeZone(),
+) {
+  const start = new Date(startsAt)
+  const day = new Intl.DateTimeFormat('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone })
+    .format(start)
+    .replace(',', '')
+  const clock = new Intl.DateTimeFormat('en-AU', { hour: 'numeric', minute: '2-digit', timeZone })
+  let time = `${clock.format(start)} – ${clock.format(new Date(endsAt))}`
+  if (viewerZone !== timeZone) {
+    const zone = new Intl.DateTimeFormat('en-AU', { timeZone, timeZoneName: 'short' })
+      .formatToParts(start)
+      .find((part) => part.type === 'timeZoneName')?.value
+    if (zone) time += ` ${zone}`
+    // The viewer's day too when it isn't the same date there (an overseas buyer).
+    const viewerDay = new Intl.DateTimeFormat('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: viewerZone })
+      .format(start)
+      .replace(',', '')
+    const yourClock = new Intl.DateTimeFormat('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: viewerZone }).format(
+      start,
+    )
+    const yours = viewerDay === day ? yourClock : `${viewerDay.split(' ')[0]} ${yourClock}`
+    if (yours !== clock.format(start)) time += ` (${yours} your time)`
+  }
+  return { day, time }
+}
+
 /** "12 Nov 2026". */
 export function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -43,6 +82,10 @@ export function formatPriceStep(value: number) {
   if (value >= 1_000) return `$${Number((value / 1_000).toFixed(1))}k`
   return `$${value}`
 }
+
+/** What "Under offer" means, for the ⓘ next to it on the property page and the search filters. */
+export const UNDER_OFFER_EXPLAINED =
+  "The seller has accepted an offer, but the sale isn't final yet. It may come back on the market if the deal falls through."
 
 export const statusLabels: Record<PropertyStatus, string> = {
   for_sale: 'For sale',
