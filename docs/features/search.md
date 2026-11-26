@@ -92,6 +92,9 @@ batch.
 - **2026-11-25: Empty results say which filters to loosen.**
 - **2026-11-25: Errors are worded by cause** (connection, server, rejected request), and 4xx errors
   aren't retried automatically.
+- **2026-11-26: An ⓘ by "Exclude under offer" explains the term** (`Toggletip`, shared with the
+  property page; see [property-detail.md](property-detail.md)). It sits outside the checkbox's
+  label, so pressing it doesn't change the filter.
 
 ## Known gaps
 

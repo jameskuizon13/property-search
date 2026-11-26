@@ -1,5 +1,6 @@
 import { Link, useRouter } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { srcSetFor } from './photoSources'
 import { rememberReturnFocus } from './returnFocus'
 import { featureParts, statusLabels } from '@/features/properties/format'
 import type { Property, PropertyStatus } from '@/features/properties/types'
@@ -25,14 +26,6 @@ export function StatusBadge({ status, className = '', size = 'sm' }: BadgeProps)
       {statusLabels[status]}
     </span>
   )
-}
-
-/** The bundled demo photos come in two widths: `house-01.webp` (960 px) and `house-01-480.webp`. */
-const DEMO_PHOTO = /^(\/images\/properties\/[a-z]+-\d+)\.webp$/
-
-function srcSetFor(src: string) {
-  const base = DEMO_PHOTO.exec(src)?.[1]
-  return base && `${base}-480.webp 480w, ${src} 960w`
 }
 
 type PhotoProps = {

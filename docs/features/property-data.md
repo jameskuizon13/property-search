@@ -3,7 +3,8 @@
 ## What it does
 
 The listings everything else searches, watches and updates: the `properties` table, its change
-history in `property_events`, the property-type list the UI shows, and a seed that fills a
+history in `property_events`, the agents, open homes and gallery photos the property page shows
+(see [property-detail.md](property-detail.md)), the property-type list the UI shows, and a seed that fills a
 database with realistic Australian listings. Admin screens to edit properties are planned, not
 built; until then data comes from the seed and the `demo:*` rake tasks (see
 [live-updates.md](live-updates.md)).
@@ -25,7 +26,8 @@ built; until then data comes from the seed and the `demo:*` rake tasks (see
 | `api/app/resources/property_detail_resource.rb`, `property_event_resource.rb` | The property page's shape (see [property-detail.md](property-detail.md)) |
 | `api/app/controllers/api/v1/property_types_controller.rb` | The type list, HTTP-cached |
 | `api/db/seeds.rb`, `api/db/seeds/property_generator.rb`, `api/db/seeds/suburbs.csv` | Demo accounts and generated listings over 120 real suburb/postcode pairs, each with a photo and a write-up |
-| `web/public/images/properties/` | The photos the seed points `image_url` at, with `CREDITS.md` |
+| `web/public/images/properties/` | The photos the seed points `image_url` and the galleries at, with `CREDITS.md` |
+| `api/db/seeds/listing_extras.rb` | Agents, galleries and open homes for the seeded listings (its own random stream) |
 | `web/src/features/properties/types.ts`, `format.ts` | The client's `Property` type; price and status formatting |
 
 ## Rules that must stay true
@@ -43,7 +45,7 @@ built; until then data comes from the seed and the `demo:*` rake tasks (see
 - **One save per transaction.** The commit callback only sees the last save's changes, so a second
   save in the same transaction would log the first change but never broadcast it.
 - **The seed stays silent:** `insert_all` on purpose, so seeding broadcasts nothing and writes no
-  events except its own status changes (see the decision log). It bumps `SearchCache` itself at the end.
+  events except its own status and price changes (see the decision log). It bumps `SearchCache` itself at the end.
 
 ## Decision log
 
@@ -83,6 +85,15 @@ built; until then data comes from the seed and the `demo:*` rake tasks (see
 - **2026-11-26: The seed writes one status change for each listing it creates under offer, sold or
   withdrawn** (reverses "the seed writes no events"), dated 1–30 days after listing, so the
   history on a sold listing says when it sold. It still never broadcasts.
+- **2026-11-26: The seed writes price changes too.** About one in five listings with a shown
+  price gets one or two (mostly drops, in $5,000 steps like `demo:change_property`), built
+  backwards from today's price so the last change ends at it, dated after listing and before any
+  status change. Withheld prices get none. From a fourth random stream (`random_seed + 3`), so
+  nothing else changed. Before this, no seeded listing's history ever showed a price.
+- **2026-11-26: Agents, galleries and open homes come from `ListingExtras`,** on a third random
+  stream (`random_seed + 2`), so none of the earlier generated values changed. Each state has its
+  own (made-up) agency with three agents; a listing's agent works in its state. Seeding 10k
+  listings now takes about 5 s instead of 2 s.
 - **2026-11-26: `description` is a nullable text column, capped at 5,000 characters,** so a
   listing can be created before its write-up exists.
 

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { formatPriceStep } from './format'
+import { Toggletip } from '@/components/ui/Toggletip'
+import { formatPriceStep, UNDER_OFFER_EXPLAINED } from './format'
 import { usePropertyTypes } from './hooks'
 import { BEDROOM_OPTIONS, PRICE_STEPS, type FilterPatch, type SearchFilters, type Sort } from './searchSchema'
 
@@ -196,15 +197,19 @@ export function FilterBar({ filters, onChange }: Props) {
       )}
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={!!filters.excludeUnderOffer}
-            onChange={(e) => onChange({ excludeUnderOffer: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300 text-indigo-600"
-          />
-          Exclude under offer
-        </label>
+        {/* The ⓘ sits outside the label, so pressing it doesn't tick the box. */}
+        <span className="inline-flex items-center gap-1">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={!!filters.excludeUnderOffer}
+              onChange={(e) => onChange({ excludeUnderOffer: e.target.checked })}
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+            />
+            Exclude under offer
+          </label>
+          <Toggletip label="What does under offer mean?">{UNDER_OFFER_EXPLAINED}</Toggletip>
+        </span>
         <label className="inline-flex items-center gap-2 text-sm text-slate-700">
           <input
             type="checkbox"

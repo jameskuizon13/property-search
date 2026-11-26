@@ -1,11 +1,14 @@
 import { Link, useCanGoBack, useLocation, useParams, useRouter } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { PropertyPhoto, StatusBadge } from '@/components/ui/PropertyCard'
+import { StatusBadge } from '@/components/ui/PropertyCard'
+import { Toggletip } from '@/components/ui/Toggletip'
 import { EmptyState, ErrorState } from '@/components/ui/states'
 import { WatchButton } from '@/features/watchlist/WatchButton'
 import { ApiError } from '@/lib/api'
-import { featureParts, formatDate, fullPrice, isLandOnly, statusLabels } from './format'
+import { featureParts, formatDate, fullPrice, isLandOnly, statusLabels, UNDER_OFFER_EXPLAINED } from './format'
 import { fallbackLabel, useProperty, usePropertyTypeLabels } from './hooks'
+import { AgentCard, OpenHomes } from './ListingContact'
+import { PhotoGallery } from './PhotoGallery'
 import type { PropertyDetail, PropertyEvent } from './types'
 
 /** Ids the API can hold and JavaScript can count exactly. Anything else is "not found" without a request. */
@@ -14,10 +17,18 @@ const PROPERTY_ID = /^[1-9]\d{0,14}$/
 /** index.html's <title>, put back when the page closes. */
 const APP_NAME = 'Property Search'
 
-/** "Price dropped from $850,000 to $820,000", "Now under offer (was for sale)". */
-function describeEvent(event: PropertyEvent) {
+const statusText = (status: string) => (statusLabels[status as keyof typeof statusLabels] ?? status).toLowerCase()
+
+/**
+ * "Price dropped from $850,000 to $820,000"; "Now under offer (was for sale)"
+ * for the newest status change only, "Changed to under offer (was for sale)"
+ * for older ones: a listing can go back on the market, so an older "Now"
+ * would be false.
+ */
+function describeEvent(event: PropertyEvent, newestStatusChange: boolean) {
   if (event.kind === 'status_changed') {
-    return `${statusLabels[event.to] ?? event.to} (was ${(statusLabels[event.from] ?? event.from).toLowerCase()})`
+    const change = `${statusText(event.to)} (was ${statusText(event.from)})`
+    return newestStatusChange ? `Now ${change}` : `Changed to ${change}`
   }
   const { from, to } = event
   // Both null: the amounts are hidden while the price is withheld.
@@ -89,20 +100,36 @@ function NotFound() {
   )
 }
 
+/**
+ * The asking price when it was listed: the oldest price change's `from`, or
+ * today's price if it never changed. Unknown (null) while the price is
+ * withheld, or when older changes were cut off.
+ */
+function listedPrice(property: PropertyDetail) {
+  if (property.priceCents === null || !property.historyComplete) return null
+  const priceChanges = property.history.filter((event) => event.kind === 'price_changed')
+  return priceChanges.length ? priceChanges[priceChanges.length - 1].from : property.priceCents
+}
+
 function History({ property, loading }: { property: PropertyDetail; loading: boolean }) {
   if (loading) return <p className="text-sm text-slate-500">Loading history…</p>
+  // Newest first, so the first status change in the list is the current one.
+  const newestStatusChangeId = property.history.find((event) => event.kind === 'status_changed')?.id
+  const firstPrice = listedPrice(property)
   return (
     <ol className="space-y-3">
       {property.history.map((event) => (
         <li key={event.id} className="flex flex-wrap justify-between gap-x-4 text-sm">
-          <span className="text-slate-800">{describeEvent(event)}</span>
+          <span className="text-slate-800">{describeEvent(event, event.id === newestStatusChangeId)}</span>
           <time dateTime={event.createdAt} className="text-slate-500">
             {formatDate(event.createdAt)}
           </time>
         </li>
       ))}
       <li className="flex flex-wrap justify-between gap-x-4 text-sm">
-        <span className="text-slate-800">Listed for sale</span>
+        <span className="text-slate-800">
+          Listed for sale{firstPrice !== null && ` at ${fullPrice(firstPrice)}`}
+        </span>
         <time dateTime={property.listedAt} className="text-slate-500">
           {formatDate(property.listedAt)}
         </time>
@@ -138,15 +165,11 @@ function Details({ property, loading }: { property: PropertyDetail; loading: boo
 
   return (
     <article aria-labelledby="property-address" className="space-y-8">
-      <div className="relative aspect-[3/2] max-h-[28rem] w-full overflow-hidden rounded-lg bg-slate-100">
-        <PropertyPhoto
-          src={property.imageUrl}
-          alt={`Photo of ${property.streetAddress}`}
-          sizes="(min-width: 1024px) 992px, 100vw"
-          priority
-        />
-        <StatusBadge status={property.status} size="md" className="absolute top-4 left-4" />
-      </div>
+      <PhotoGallery
+        photos={property.photos}
+        address={property.streetAddress}
+        overlay={<StatusBadge status={property.status} size="md" className="absolute top-4 left-4" />}
+      />
 
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1 break-words">
@@ -157,6 +180,12 @@ function Details({ property, loading }: { property: PropertyDetail; loading: boo
           </h1>
           <p className="text-slate-600">{location}</p>
           <p className="pt-1 text-slate-700">{featureParts(property).join(' · ')}</p>
+          {property.status === 'under_offer' && (
+            <p className="flex items-center gap-1 pt-1 text-sm font-medium text-amber-800">
+              Under offer
+              <Toggletip label="What does under offer mean?">{UNDER_OFFER_EXPLAINED}</Toggletip>
+            </p>
+          )}
         </div>
         <div className="shrink-0">
           <WatchButton property={property} />
@@ -188,6 +217,14 @@ function Details({ property, loading }: { property: PropertyDetail; loading: boo
         </div>
 
         <aside className="min-w-0 space-y-6 break-words">
+          <AgentCard agent={property.agent} listing={`${property.streetAddress}, ${location}`} loading={loading} />
+          <OpenHomes
+            inspections={property.inspections}
+            timeZone={property.timeZone}
+            status={property.status}
+            loading={loading}
+          />
+
           <section aria-labelledby="facts-heading" className="rounded-lg border border-slate-200 bg-white p-4">
             <h2 id="facts-heading" className="mb-3 font-semibold">
               Property details
@@ -251,7 +288,8 @@ export function PropertyPage() {
       {notFound ? (
         <NotFound />
       ) : property ? (
-        <Details property={property} loading={query.isPlaceholderData} />
+        // Keyed by id: another property starts on its first photo, with focus on its address.
+        <Details key={property.id} property={property} loading={query.isPlaceholderData} />
       ) : query.isError ? (
         <ErrorState title="We couldn't load this property" error={query.error} onRetry={() => void query.refetch()} />
       ) : (

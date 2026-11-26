@@ -3,14 +3,15 @@
 ## What it does
 
 Every listing has a photo, and every card opens the property's own page at
-`/properties/:id`: a large photo, the status, price, address, beds/baths/cars/land, the property
-type and listed date, the agent's description, the price and status history, the location with an
-"Open in Google Maps" link, and the Watch button. "Back to results" (or "Back to watchlist")
+`/properties/:id`: a photo gallery (the main photo, then the rooms the listing has), the status,
+price, address, beds/baths/cars/land, the property type and listed date, the description, the price
+and status history, the listing agent with "Call" and "Email" links, upcoming open homes in the
+listing's local time, the location with an "Open in Google Maps" link, and the Watch button. "Back to results" (or "Back to watchlist")
 returns to the same list and scroll position, with keyboard focus on the card that was opened. The page is public, like search; signing in only adds whether you watch it.
 
 | Endpoint | Result |
 | -------- | ------ |
-| `GET /api/v1/properties/:id` | `{ data: <search shape> + description + history + historyComplete }`. `history` is the 20 most recent price and status changes, newest first; `historyComplete` is false when older ones exist. Any status, sold and withdrawn included. Unknown or malformed id → 404 |
+| `GET /api/v1/properties/:id` | `{ data: <search shape> + description + history + historyComplete + photos + agent + inspections + timeZone }`. `photos` is the gallery in order, the main photo first (`{ url, caption }`); `agent` is `{ id, name, agency, phone, email }` or null; `inspections` are up to 6 open homes not yet over, soonest first (`{ id, startsAt, endsAt }`, UTC); `timeZone` is the listing's, e.g. `Australia/Perth`. `history` is the 20 most recent price and status changes, newest first; `historyComplete` is false when older ones exist. Any status, sold and withdrawn included. Unknown or malformed id → 404 |
 
 A history entry is `{ id, kind, from, to, createdAt }`: for `price_changed`, `from`/`to` are integer
 cents (null when withheld, and **always** null while the property's price is withheld now); for
@@ -24,11 +25,19 @@ cents (null when withheld, and **always** null while the property's price is wit
 | `api/app/controllers/api/v1/base_controller.rb` | `property_id`: the id format check, shared with the watchlist |
 | `api/app/resources/property_detail_resource.rb` | `PropertyResource` plus `description` and `history` |
 | `api/app/resources/property_event_resource.rb` | One history entry; prices back to integer cents |
+| `api/app/resources/agent_resource.rb`, `inspection_resource.rb` | The agent and an open home |
+| `api/app/models/agent.rb`, `inspection.rb`, `property_photo.rb` | Agents (contact details only), open homes (`upcoming` scope), gallery photos |
+| `api/db/migrate/*_create_agents.rb`, `*_create_inspections.rb`, `*_create_property_photos.rb` | The three tables, `properties.agent_id` (nullified on delete), CHECKs and indexes |
+| `api/db/seeds/listing_extras.rb` | Seeds agents (one agency per state), each listing's gallery and its open homes |
 | `api/db/migrate/*_add_description_to_properties.rb` | The `description` text column |
 | `api/db/seeds/property_generator.rb` | `photo_for` and `description_for` (see [property-data.md](property-data.md)) |
-| `web/public/images/properties/` | 31 demo photos, each at 960×640 and 480×320 (`-480.webp`), and `CREDITS.md` |
+| `web/public/images/properties/` | 60 demo photos (35 outside, 25 rooms and gardens), each at 960×640 and 480×320 (`-480.webp`), and `CREDITS.md` |
 | `web/src/components/ui/PropertyCard.tsx` | The card: photo, the stretched address link, `StatusBadge`, `PropertyPhoto` |
 | `web/src/features/properties/PropertyPage.tsx` | The page: loading, not-found and error states, details, history, location, back link |
+| `web/src/features/properties/PhotoGallery.tsx` | The gallery: previous/next, arrow keys, counter, thumbnails |
+| `web/src/features/properties/ListingContact.tsx` | `AgentCard` (call and email links) and `OpenHomes` |
+| `web/src/components/ui/photoSources.ts` | `srcSetFor`, `smallPhoto`: the 480 px copies by name |
+| `web/src/components/ui/Toggletip.tsx` | The ⓘ button that explains "Under offer" (also used by the search filters) |
 | `web/src/features/properties/hooks.ts` | `useProperty`: the detail query, with the cached card as placeholder data |
 | `web/src/features/properties/cache.ts` | Watch toggles and live updates reach the cached detail as well as the lists |
 | `web/src/router.tsx` | The `/properties/$propertyId` route (code-split); `HistoryState.from` |
@@ -71,6 +80,28 @@ cents (null when withheld, and **always** null while the property's price is wit
   `/images/properties/<set>-<nn>.webp`. Any other `image_url` (a future upload) gets a plain `src`.
 - **Feature lines leave zero counts out** (`featureParts`): "Studio" for a home with no bedroom,
   only the size for land. Never "0 beds · 0 baths".
+- **The main photo stays in `properties.image_url`;** `property_photos` holds only the rest, so
+  search never joins it. The API puts the main photo first in `photos`.
+- **Open-home times show in the listing's time zone** (`timeZone`, from `Property::TIME_ZONES`), with
+  the zone added when the viewer is somewhere else: a Perth open home at 10 am never reads as 1 pm.
+- **Agent phone numbers come from the ACMA's range reserved for fiction** (`ListingExtras::PHONES`)
+  and emails use `example.com`, so the demo can never call or email a real person.
+- **"Now" only on the newest status change** ("Now under offer (was for sale)"); older ones read
+  "Changed to under offer (was for sale)". A listing can go back on the market, so an older "Now"
+  would be false.
+- **"Listed for sale at $X" only when X is known:** the oldest price change's `from`, or today's
+  price if it never changed; plain "Listed for sale" while the price is withheld or the history is
+  cut off.
+- **Explanations open on click or tap, never on hover** (`Toggletip`), and sit outside any label
+  they explain, so pressing ⓘ never ticks a checkbox. Not on result cards: one more tab stop per
+  card, and the cards' `content-visibility: auto` would also break the bubble's `position: fixed`.
+- **Only a listing for sale shows open homes.** One that went under offer or sold keeps its rows
+  (they come back if it does), but the API returns none and the page says why.
+- **Photo URLs are the web app's own paths** (`Property::PHOTO_PATH`, for `image_url` and gallery
+  photos), and agent emails can't contain `?` or `#`, so a later admin form can't point visitors
+  at an outside host or rewrite the `mailto:` link.
+- **Gallery captions are only for rooms the listing has** (no "Bedroom" for a studio, no "Backyard"
+  without 200 m² of land), like the write-ups.
 - **Photos are served by the web app, not the API.** `image_url` is a path on the web origin
   (`/images/properties/house-01.webp`), so it works through the dev proxy and from any static host (a production web image is planned, not
   built).
@@ -135,6 +166,54 @@ cents (null when withheld, and **always** null while the property's price is wit
 - **2026-11-26: `historyComplete` from one extra row** (`LIMIT 21`), so the page can say "Earlier
   changes aren't shown" instead of a cut-off list that looks complete.
 
+- **2026-11-26: Agents, open homes and a gallery, on the same branch as the page** (the user asked
+  for the walkthrough's property-page gaps here, and the search gaps on a branch of their own).
+  The data is seeded; nothing edits it yet (the admin plan should).
+- **2026-11-26: Contact is a phone link and an email link,** not an enquiry form.
+  _Rejected for now:_ a form that stores enquiries: it collects people's names, emails and phone
+  numbers, which needs validation, rate limits, a retention rule and a way to reach the agent, all
+  for a demo with fictional agents.
+- **2026-11-26: Gallery photos in their own table** (`property_photos`: url, caption, position).
+  _Rejected:_ an array column on `properties` (no captions, harder to reorder or upload one at a
+  time later).
+- **2026-11-26: Open homes are rows with start and end times,** shown while not over (an open home
+  under way still shows). They're seeded for the three weeks after seeding, so they run out:
+  reseed to get new ones.
+
+- **2026-11-26: From the listing and search QA in another session (the user approved these):**
+  - The newest status change says "Now under offer (was for sale)"; older ones "Changed to …".
+    _Rejected:_ "Now" on every status line (false once a listing goes back on the market).
+  - "Under offer" is explained by an ⓘ toggletip by the price and by the "Exclude under offer"
+    filter: "The seller has accepted an offer, but the sale isn't final yet…".
+    _Rejected:_ a hover tooltip (phones and keyboards can't use it); a toggletip on every card
+    (a tab stop per card).
+  - The first history line gives the listing price ("Listed for sale at $850,000").
+  - The seed writes price changes, so the history shows prices (see
+    [property-data.md](property-data.md)).
+- **2026-11-26: Fixes from the second home-buyer walkthrough and QA round:**
+  - Write-ups fit the listing's status and type: no "won't last" or "Inspection is highly
+    recommended" once it's not for sale, land wording for land, and no "private inspection" line
+    next to listed open homes. A studio no longer gets an ensuite.
+  - More outside photos (12 houses instead of 8); the one with a "De Witt St" street sign and the
+    Queenslander on stilts were swapped out.
+  - Open homes at more varied times (Saturdays, Sundays and weekday evenings).
+  - An interstate open home also shows your own time ("5:30 pm AWST (8:30 pm your time)"), with
+    your weekday when it's a different date where you are.
+  - The gallery shows the small copy behind the main photo while it loads (no blank box), moves on
+    a sideways swipe, and keeps the current thumbnail in view.
+  - The ⓘ bubble is placed with `position: fixed` inside the screen, so it never widens the page on
+    a phone, and closes when focus moves away or the page scrolls.
+    _Rejected:_ `absolute` under the button (cut off and widening the page near the right edge).
+  - Thumbnail buttons are positioned, so their hidden labels can't widen the page either.
+  - The call link has the country code (`tel:+61…`), so it works from overseas.
+- **2026-11-26: Fixes from the CTO review of the above:**
+  - Agent emails can't contain `%` either, so an encoded `?` or `,` can't sneak a recipient into
+    the `mailto:` link.
+  - Each gallery photo is a fresh `<img>` (keyed by URL), so the caption never runs ahead of a
+    photo still loading; the small copy shows through instead.
+  - The ⓘ bubble also closes on a resize or rotation, so it can't be left off-screen.
+  - The listing-price test uses a price that changed, so it would catch the wrong number.
+
 - **2026-11-26: The card's hover is the whole card, not an underlined address.** The user found
   that underlining only the address made it look like a link to Google Maps, when the whole card
   opens the property page. Hover now gives the card a stronger shadow and a darker border and zooms
@@ -146,13 +225,16 @@ cents (null when withheld, and **always** null while the property's price is wit
 
 ## Known gaps
 
-- No agent name, phone or enquiry form; the seed has no agents. "Contact agent" prices have no
-  action behind them.
-- No inspection times, floor plans or more than one photo.
-- Descriptions are generated from templates, and 31 photos are shared by 10,000 listings, so
-  different homes can look the same.
-- The admin form (Milestone 9 in `PRD.md`) should edit `description` and pick a photo; its plan
-  predates both. It must also check `image_url` (an outside host would see every visitor's IP), and
+- No enquiry form (by choice, see the decision log), no floor plans, no full-screen photo viewer, and
+  no "add to calendar" for open homes.
+- Open homes are seeded for three weeks after seeding; after that a reseed is needed.
+- Descriptions are generated from templates, and 60 photos are shared by 10,000 listings, so
+  different homes can look the same, even next to each other in the results.
+- Each state has three agents, so the same agent turns up on many listings.
+- Sold listings are reachable only from a watchlist or a link: search shows active listings only,
+  and there is no sold search or "sold prices nearby" (a search feature, not built).
+- The admin form (Milestone 9 in `PRD.md`) should edit `description`, the gallery, the agent and open
+  homes; its plan predates all of them. It must also check `image_url` (an outside host would see every visitor's IP), and
   the page has no fallback for a photo that fails to load.
 - Live updates reach the page only for properties you watch; anyone else sees a new price when the
   page refetches (after 30 s, on the next visit).
@@ -172,10 +254,13 @@ cents (null when withheld, and **always** null while the property's price is wit
 
 ## How to check it
 
-- API: `spec/requests/api/v1/property_detail_spec.rb`; photos and write-ups in
-  `spec/db/property_generator_spec.rb`.
+- API: `spec/requests/api/v1/property_detail_spec.rb`; `spec/models/agent_spec.rb`,
+  `inspection_spec.rb`, `property_photo_spec.rb`; photos, write-ups, agents, galleries and open homes
+  in `spec/db/property_generator_spec.rb`.
 - Web: `web/src/features/properties/property.test.tsx` (card opens the page, Watch stays a button,
   placeholder data, not found, bad id, retry, watch shows on the cards, live update, the back link
   from the watchlist and after signing in, focus back on the card, a watch click during loading,
-  sign-out, the cut-off history, land facts, a reconnect).
+  sign-out, the cut-off history, land facts, a reconnect, the gallery, the agent links, open homes,
+  "Now" wording, the listing price, the under-offer explainer);
+  `format.test.ts` for open-home times across time zones.
 - Manually: `make seed`, open `/search`, click any card (photo or address), use "Back to results".

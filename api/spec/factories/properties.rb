@@ -29,3 +29,25 @@ FactoryBot.define do
     to_value { "82000000" }
   end
 end
+
+FactoryBot.define do
+  factory :agent do
+    sequence(:name) { |n| "Agent #{n}" }
+    agency { "Laneway Property Co" }
+    phone { "0491 570 156" }
+    sequence(:email) { |n| "agent#{n}@example.com" }
+  end
+
+  factory :inspection do
+    property
+    starts_at { 2.days.from_now.change(hour: 10) }
+    ends_at { starts_at + 30.minutes }
+  end
+
+  factory :property_photo do
+    property
+    sequence(:position) { |n| n }
+    url { "/images/properties/kitchen-01.webp" }
+    caption { "Kitchen" }
+  end
+end

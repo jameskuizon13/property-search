@@ -11,7 +11,7 @@ We are building a small property search app. Users search Australian listings, f
 | Rubric area | How this PRD answers it |
 | --- | --- |
 | API design & RESTful patterns | Versioned `/api/v1` resources, consistent envelope and error shape (API design) |
-| Schema & relationships | `users`, `properties`, `watchlist_items`, `property_events` with FKs and unique constraints (Data model) |
+| Schema & relationships | `users`, `properties`, `watchlist_items`, `property_events` (plus `agents`, `inspections`, `property_photos` for the property page) with FKs and unique constraints (Data model) |
 | Component architecture | Feature-sliced React app; server state, URL state and client state kept apart (Frontend) |
 | State management | TanStack Query for server state, TanStack Router for URL state, Jotai for client state |
 | Query optimisation / N+1 | `watched` flag computed in one query; `bullet` raises on N+1 in the test suite |
@@ -74,7 +74,7 @@ The must-haves are the challenge's functional list plus auth and live watchlist 
 
 **Bonus, in order:** rate limiting (rack-attack) → admin UI for properties (story 8) → HTTP caching with ETag and a Redis cache for counts → saved searches → location search by radius.
 
-**Out of scope:** embedded maps (the property page links out to Google Maps), more than one photo per listing, image uploads, agent details and enquiry forms, bulk import, user management in the admin, email alerts, password reset, mobile app.
+**Out of scope:** embedded maps (the property page links out to Google Maps), image uploads, enquiry forms (the page links to the agent's phone and email instead), bulk import, user management in the admin, email alerts, password reset, mobile app.
 
 ## Functional requirements
 
@@ -98,7 +98,7 @@ Each requirement below has acceptance criteria a test can check.
 
 **FR-1a Property page (Milestone 8)**
 
-- `/properties/:id` shows a large photo, status badge, price, address, beds/baths/cars/land, property type, listed date, the description, the price and status history (newest first, then "Listed for sale"), the location with an "Open in Google Maps" link, and the watch toggle.
+- `/properties/:id` shows a photo gallery (the main photo, then the rooms the listing has; previous/next, arrow keys and thumbnails), status badge, price, address, beds/baths/cars/land, property type, listed date, the description, the price and status history (newest first, then "Listed for sale"), the listing agent with call and email links, upcoming open homes in the listing's local time, the location with an "Open in Google Maps" link, and the watch toggle.
 - Opened from a card, it shows the card's details at once while the description and history load. Opened from a link, it shows a skeleton first.
 - An unknown id, or one that isn't a plain number, shows "We couldn't find this property" with a link to search; any other failure shows an error with a Retry.
 - "Back to results" returns to the same results and scroll position. Watching on the page shows on the cards, and a live update changes the page in place.
@@ -185,13 +185,16 @@ property-search/
 
 ## Data model & indexing
 
-The schema has four tables. Every index maps to a real query, and each one is shown with `EXPLAIN ANALYZE` in the README. Those plans are captured from the real ActiveRecord query (`Properties::SearchQuery.new(params).relation.explain(:analyze)`), not hand-written SQL, so they prove the index matches what Rails actually sends. They are captured with `SEED_COUNT=100000`, because at 10k rows Postgres often prefers a plain table scan and the indexes wouldn't show. Indexes are partial where every query shares the same condition (active listings), which keeps them smaller. Any index that `EXPLAIN` shows is never used gets dropped.
+The schema has four core tables, plus three that only the property page reads (`agents`, `inspections`, `property_photos`, added in Milestone 8). Every index maps to a real query, and each search index is shown with `EXPLAIN ANALYZE` in the README. The property page's indexes (`inspections (property_id, starts_at)`, `property_photos (property_id, position)` and `properties.agent_id`, which also serves the FK's `ON DELETE SET NULL`) are per-property lookups and aren't explained there. Those plans are captured from the real ActiveRecord query (`Properties::SearchQuery.new(params).relation.explain(:analyze)`), not hand-written SQL, so they prove the index matches what Rails actually sends. They are captured with `SEED_COUNT=100000`, because at 10k rows Postgres often prefers a plain table scan and the indexes wouldn't show. Indexes are partial where every query shares the same condition (active listings), which keeps them smaller. Any index that `EXPLAIN` shows is never used gets dropped.
 
 | Table | Key columns | Constraints |
 | --- | --- | --- |
 | `users` | `email` (string, stored lowercased via `normalizes`), `password_digest`, `name`, `role` (enum: user, admin; default user; added in Milestone 2 so the seed can create the admin) | unique `email`; CHECK on `role` |
 | `properties` | `street_address`, `suburb`, `state` (NSW…ACT), `postcode` (string, CHECK `^[0-9]{4}$`), `latitude`, `longitude`, `price_cents` (bigint, nullable), `price_display` (e.g. “Contact agent”), `bedrooms`, `bathrooms`, `car_spaces` (smallint), `land_size_sqm`, `property_type` (string), `status` (string: for\_sale, under\_offer, sold, withdrawn), `listed_at`, `image_url`, `description` (text, nullable; Milestone 8), `lock_version` | NOT NULL + CHECK on the allowed string values and non-negative numbers |
 | `watchlist_items` | `user_id`, `property_id`, `created_at` | FKs `on_delete: cascade`, unique (`user_id`, `property_id`) |
+| `agents` (Milestone 8) | `name`, `agency`, `phone`, `email`; `properties.agent_id` (FK, nullified on delete) | NOT NULL |
+| `inspections` (Milestone 8) | `property_id`, `starts_at`, `ends_at` | FK cascade; CHECK `ends_at > starts_at`; index (`property_id`, `starts_at`) |
+| `property_photos` (Milestone 8) | `property_id`, `url`, `caption`, `position` | FK cascade; unique (`property_id`, `position`) |
 | `property_events` | `property_id`, `kind` (price\_changed, status\_changed), `from_value`, `to_value`, `created_at` | FK; written in the same transaction as the change (`after_update`, not `after_commit`) |
 | `saved_searches` (bonus) | `user_id`, `name`, `params` (jsonb) | FK |
 
@@ -227,7 +230,7 @@ The API is versioned under `/api/v1`. It returns JSON and uses one success envel
 | `GET /auth/sessions`, `DELETE /auth/sessions` | yes | List devices / log out everywhere (Milestone 10) |
 | `GET /me` | yes | Current user, including `role` so the UI knows whether to show the admin link |
 | `GET /properties` | optional | Search, filter, sort, paginate |
-| `GET /properties/:id` | optional | *(Milestone 8)* The search shape plus `description` and `history` (the 20 most recent `property_events`, newest first); any status; 404 for an unknown or malformed id |
+| `GET /properties/:id` | optional | *(Milestone 8)* The search shape plus `description`, `history` (the 20 most recent `property_events`, newest first), `historyComplete`, `photos`, `agent`, `inspections` (upcoming) and `timeZone`; any status; 404 for an unknown or malformed id |
 | `GET /property_types` | – | Enum list so the UI never hard-codes it |
 | `GET /watchlist` | yes | Paginated watched properties |
 | `PUT /watchlist/:property_id` | yes | Watch, idempotent → 200/201 (`create_or_find_by!`, so two concurrent PUTs both succeed against the unique index) |
@@ -523,10 +526,11 @@ Data has to exist before anything can be searched. For now it comes from a seed 
 
 Manual QA found the app hard to use as a property search: every card read "No photo", and a card couldn't be opened, so there was no way to learn more about a listing. The plan had scoped photos out and left the detail page optional; both are basics anyone looking for a home expects, so this milestone comes before the admin UI.
 
-- Photos: 31 Unsplash photos (Unsplash License, credited in `web/public/images/properties/CREDITS.md`), each as a 960×640 WebP for the property page and a 480×320 copy for cards (about 4.6 MB in all), served by the web app. The seed gives each listing one that suits its type, plus a three-paragraph description, from its own random stream so the other generated values don't change.
+- Photos: 35 Unsplash photos of the outside of homes, land and farms, plus 25 of rooms and gardens for the galleries (Unsplash License, credited in `web/public/images/properties/CREDITS.md`), each as a 960×640 WebP for the property page and a 480×320 copy for cards and thumbnails (about 8.4 MB in all), served by the web app. The seed gives each listing one that suits its type, plus a three-paragraph description, from its own random stream so the other generated values don't change.
 - API: `description` column; `GET /properties/:id` (FR-1a) with `PropertyDetailResource` and `PropertyEventResource`; the id format check shared with the watchlist in `BaseController`.
 - Web: cards link to `/properties/$propertyId` (a stretched link; Watch stays a separate button); `PropertyPage`; `useProperty` with the card as placeholder data; the cache helpers cover the page, so watch toggles and live updates reach it.
 - Specs and Vitest tests for each; QA, a non-technical home-buyer walkthrough and a CTO review before commit.
+- Then, from the walkthrough, on the same branch: a photo gallery (25 more photos of kitchens, living areas, bedrooms, bathrooms and gardens in `property_photos`), listing agents with call and email links (`agents`), and open homes (`inspections`), all seeded by `ListingExtras`. The walkthrough's search gaps (filter by state, suburb suggestions, collapsible filters on phones) are the next piece of work, on a branch of their own.
 
 **Milestone 9 — Nice to have: admin UI for properties (~55 min, only if time is left after Milestones 1–8)**
 

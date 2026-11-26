@@ -219,6 +219,17 @@ describe('filters', () => {
     expect(queryClient.getQueryCache().find({ queryKey: ['properties', 'list', {}], exact: true })).toBeDefined()
   })
 
+  it('explains “under offer” next to its filter without ticking the box', async () => {
+    server.use(signedOut())
+    const user = userEvent.setup()
+    renderApp('/search')
+
+    await user.click(await screen.findByRole('button', { name: 'What does under offer mean?' }))
+
+    expect(screen.getByText(/the seller has accepted an offer/i)).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Exclude under offer' })).not.toBeChecked()
+  })
+
   it('writes property types and the exclude toggles to the URL', async () => {
     const requests = recordSearches(() => page([], { totalCount: 0 }))
     server.use(signedOut())

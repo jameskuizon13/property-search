@@ -90,7 +90,7 @@ Over a limit: 429, `{ "error": { "code": "rate_limited", … } }`, and `Retry-Af
   `TRUSTED_PROXIES` in production.
 - Fixed one-minute windows: up to twice a limit can land across a window boundary.
 - Listing photos are WebP: cards load a 480×320 copy (~40 KB) through `srcset`, the property page
-  the 960×640 one (~110 KB). The 31 files repeat across listings, so a long scroll loads each at
+  the 960×640 one (~110 KB). The 60 photos repeat across listings, so a long scroll loads each at
   most once (see [property-detail.md](property-detail.md)).
 
 ## How to check it
