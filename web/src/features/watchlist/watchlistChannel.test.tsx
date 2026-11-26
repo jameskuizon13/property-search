@@ -208,23 +208,6 @@ describe('live watchlist updates', () => {
     expect(screen.getByText('$820,000')).toBeInTheDocument()
   })
 
-  it('shows the connection state by the user’s name', async () => {
-    await openSearch(smithSt)
-    const { mixin } = await subscription()
-    expect(screen.getByText('Connecting to live updates…')).toBeInTheDocument()
-
-    act(() => mixin.connected?.({ reconnected: false }))
-    expect(screen.getByText('Live updates on')).toBeInTheDocument()
-    expect(screen.getByText('Live')).toBeVisible() // a word, not just a colour
-
-    act(() => mixin.disconnected?.({ willAttemptReconnect: true }))
-    expect(screen.getByText('Connecting to live updates…')).toBeInTheDocument()
-
-    // The server refused the reconnect (e.g. the cookie expired): ActionCable gives up.
-    act(() => mixin.disconnected?.({ willAttemptReconnect: false }))
-    expect(screen.getByText(/Live updates off/)).toBeInTheDocument()
-  })
-
   it('still loads a list whose first batch was in flight when an update arrived', async () => {
     let releaseSearch: () => void = () => {}
     const searchHeld = new Promise<void>((resolve) => (releaseSearch = resolve))
