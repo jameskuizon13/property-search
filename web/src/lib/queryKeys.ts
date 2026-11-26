@@ -7,6 +7,8 @@ export const propertyKeys = {
   lists: () => [...propertyKeys.all, 'list'] as const,
   /** `filters` is the normalised API filter object, so equivalent URLs share one cache entry. */
   list: (filters: object) => [...propertyKeys.lists(), filters] as const,
+  details: () => [...propertyKeys.all, 'detail'] as const,
+  detail: (id: number) => [...propertyKeys.details(), id] as const,
   types: ['propertyTypes'] as const,
 }
 

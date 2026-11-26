@@ -1,11 +1,19 @@
 import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query'
 import { propertyKeys, watchlistKeys } from '@/lib/queryKeys'
 import type { Page } from '@/lib/types'
-import type { Property } from './types'
+import type { Property, PropertyDetail } from './types'
 
 type PropertyPages = InfiniteData<Page<Property>>
 
 const PROPERTY_LISTS = [propertyKeys.lists(), watchlistKeys.all]
+
+/**
+ * The property page's cached detail, if any. Every helper below covers it as
+ * well as the lists, so a watch click or a live update shows on the property
+ * page and on the cards alike.
+ */
+const cachedDetail = (queryClient: QueryClient, id: number) =>
+  queryClient.getQueryData<PropertyDetail>(propertyKeys.detail(id))
 
 function patchPages(data: PropertyPages | undefined, id: number, patch: Partial<Property>) {
   if (!data) return data
@@ -27,10 +35,15 @@ export function patchCachedProperty(queryClient: QueryClient, id: number, patch:
   for (const queryKey of PROPERTY_LISTS) {
     queryClient.setQueriesData<PropertyPages>({ queryKey }, (data) => patchPages(data, id, patch))
   }
+  if (cachedDetail(queryClient, id)) {
+    queryClient.setQueryData<PropertyDetail>(propertyKeys.detail(id), (data) => data && { ...data, ...patch })
+  }
 }
 
-/** The property as currently cached, from whichever list has it. */
+/** The property as currently cached, from its page or whichever list has it. */
 export function findCachedProperty(queryClient: QueryClient, id: number): Property | undefined {
+  const detail = cachedDetail(queryClient, id)
+  if (detail) return detail
   for (const queryKey of PROPERTY_LISTS) {
     for (const [, data] of queryClient.getQueriesData<PropertyPages>({ queryKey })) {
       for (const page of data?.pages ?? []) {
@@ -71,6 +84,14 @@ export function applyPropertyUpdate(queryClient: QueryClient, update: Property) 
   for (const queryKey of PROPERTY_LISTS) {
     queryClient.setQueriesData<PropertyPages>({ queryKey }, replace)
   }
+  const detail = cachedDetail(queryClient, update.id)
+  if (detail && detail.version < update.version) {
+    // The update carries no history, so the page refetches it; until then it
+    // shows the new price and status.
+    queryClient.setQueryData<PropertyDetail>(propertyKeys.detail(update.id), { ...detail, ...fields })
+    void queryClient.invalidateQueries({ queryKey: propertyKeys.detail(update.id), exact: true })
+    applied = true
+  }
   return applied
 }
 
@@ -78,11 +99,17 @@ function holds(data: unknown, id: number) {
   return !!(data as PropertyPages | undefined)?.pages?.some((page) => page.data.some((p) => p.id === id))
 }
 
+/** Lists that show the property, and its page. */
+const showsProperty = (id: number) => [
+  ...PROPERTY_LISTS.map((queryKey) => ({ queryKey, holds: (data: unknown) => holds(data, id) })),
+  { queryKey: propertyKeys.detail(id), holds: (data: unknown) => data !== undefined },
+]
+
 /**
- * Cancels list fetches in flight, but only for lists that already show this
- * property: a fetch started before a patch copied the old rows and would write
- * them back over it. Call before patching, then call the returned `resume`
- * after it.
+ * Cancels fetches in flight, but only for lists that already show this
+ * property, and for its page: a fetch started before a patch copied the old
+ * values and would write them back over it. Call before patching, then call
+ * the returned `resume` after it.
  *
  * - A cancelled next batch goes back to its earlier state, and the list's
  *   sentinel asks for it again.
@@ -91,16 +118,17 @@ function holds(data: unknown, id: number) {
  *   starts it again. Its fresh rows carry the new version, so they can't undo
  *   the patch.
  * - A list still on its first load holds no card and is left alone:
- *   cancelling it would leave it stuck on its skeletons.
+ *   cancelling it would leave it stuck on its skeletons. (A watch click
+ *   handles the property page's first load itself; see useToggleWatch.)
  */
 export async function cancelListsHolding(queryClient: QueryClient, id: number) {
   const interrupted: QueryKey[] = []
   await Promise.all(
-    PROPERTY_LISTS.map((queryKey) =>
+    showsProperty(id).map(({ queryKey, holds: shows }) =>
       queryClient.cancelQueries({
         queryKey,
         predicate: (query) => {
-          if (!holds(query.state.data, id)) return false
+          if (!shows(query.state.data)) return false
           if (query.state.fetchStatus === 'fetching' && !query.state.fetchMeta?.fetchMore) {
             interrupted.push(query.queryKey)
           }
@@ -114,9 +142,9 @@ export async function cancelListsHolding(queryClient: QueryClient, id: number) {
   }
 }
 
-/** The highest `version` of this property in any cached list, or undefined if none holds it. */
+/** The highest `version` of this property in its cached page or any cached list, or undefined if none holds it. */
 export function newestCachedVersion(queryClient: QueryClient, id: number) {
-  let newest: number | undefined
+  let newest = cachedDetail(queryClient, id)?.version
   for (const queryKey of PROPERTY_LISTS) {
     for (const [, data] of queryClient.getQueriesData<PropertyPages>({ queryKey })) {
       for (const page of data?.pages ?? []) {

@@ -219,4 +219,9 @@ RSpec.describe Property, type: :model do
       expect { property.update!(status: "sold") }.to change { property.reload.lock_version }.by(1)
     end
   end
+
+  it "only accepts the web app's own photo paths as image_url" do
+    expect(build(:property, image_url: "/images/properties/house-01.webp")).to be_valid
+    expect(build(:property, image_url: "https://evil.example/x.webp")).not_to be_valid
+  end
 end

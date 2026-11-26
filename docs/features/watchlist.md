@@ -2,7 +2,7 @@
 
 ## What it does
 
-A signed-in user can watch or unwatch any property from its card, and see their watched
+A signed-in user can watch or unwatch any property from its card or its page, and see their watched
 properties on `/watchlist`, newest added first. The button changes at once; a failed request puts
 it back with a toast. Signed-out users who click Watch go to log in and come back to the same page.
 Live price and status updates for watched properties are in [live-updates.md](live-updates.md).
@@ -19,13 +19,13 @@ All three need sign-in (401); the writes also need the `Origin` check (403).
 
 | File | Role |
 | ---- | ---- |
-| `api/app/controllers/api/v1/watchlist_controller.rb` | The three actions, the id format check, the PUT retry |
+| `api/app/controllers/api/v1/watchlist_controller.rb` | The three actions and the PUT retry; the id format check (`property_id`) is in `base_controller.rb`, shared with the property page |
 | `api/app/queries/watchlist/list_query.rb`, `cursor.rb` | The user's list in one query; its own signed cursor `[created_at µs, item id]` |
 | `api/app/models/watchlist_item.rb` | Append-or-delete rows; both FKs cascade |
 | `api/db/migrate/*_create_watchlist_items.rb`, `*_add_watchlist_items_user_created_at_index.rb` | Unique `(user_id, property_id)`, `(property_id)`, `(user_id, created_at DESC, id DESC)` |
 | `web/src/features/watchlist/WatchButton.tsx`, `useToggleWatch.ts` | The toggle: optimistic, queued per property, rollback |
 | `web/src/features/watchlist/WatchlistPage.tsx`, `useWatchlist.ts`, `api.ts` | The page, on the shared `InfiniteResults` |
-| `web/src/features/properties/cache.ts` | `patchCachedProperty`: one property updated in every cached list |
+| `web/src/features/properties/cache.ts` | `patchCachedProperty`: one property updated in every cached list and on its page |
 
 ## Rules that must stay true
 

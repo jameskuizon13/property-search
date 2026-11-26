@@ -1,7 +1,8 @@
+import { useMutationState } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { useMe } from '@/features/auth/useMe'
 import type { Property } from '@/features/properties/types'
-import { useToggleWatch } from './useToggleWatch'
+import { useToggleWatch, watchMutationKey } from './useToggleWatch'
 
 type Props = { property: Pick<Property, 'id' | 'streetAddress' | 'watched'> }
 
@@ -10,7 +11,14 @@ export function WatchButton({ property }: Props) {
   const { data: user } = useMe()
   const router = useRouter()
   const { mutate } = useToggleWatch(property.id)
-  const { watched } = property
+  // The newest click still in flight wins over the cached flag: a property
+  // page still on its first load shows the card's data as a placeholder,
+  // which the cache patch can't reach.
+  const pending = useMutationState({
+    filters: { mutationKey: watchMutationKey(property.id), status: 'pending' },
+    select: (mutation) => mutation.state.variables as boolean,
+  })
+  const watched = pending.at(-1) ?? property.watched
 
   function handleClick() {
     // undefined: /me hasn't answered yet, so we don't know. Ignore the click

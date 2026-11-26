@@ -1,10 +1,18 @@
 import type { ReactNode } from 'react'
 import { ApiError } from '@/lib/api'
 
-export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
+type EmptyStateProps = {
+  title: string
+  children?: ReactNode
+  /** 1 when the empty state is the whole page (e.g. "not found"), so the page still has an h1. */
+  headingLevel?: 1 | 2
+}
+
+export function EmptyState({ title, children, headingLevel = 2 }: EmptyStateProps) {
+  const Heading = headingLevel === 1 ? 'h1' : 'h2'
   return (
     <div className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <Heading className="text-lg font-semibold">{title}</Heading>
       {children && <div className="mt-2 space-y-4 text-slate-600">{children}</div>}
     </div>
   )

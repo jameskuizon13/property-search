@@ -2,11 +2,12 @@
 
 A small property search app, built for a fullstack coding challenge (3–4 h timebox).
 Users search Australian listings, filter by price, bedrooms and property type, scroll through
-results that keep loading, and save properties to a watchlist that updates live when a watched
+results that keep loading, open any listing for its photo, description and price history, and save properties to a watchlist that updates live when a watched
 property's price or status changes. The Docker Compose project is called `property-search`.
 
 **Status:** built: auth and minimum security, property data and seeds, the search and watchlist
-APIs, the search and watchlist UI, live watchlist updates, and rate limits and caching. Admin screens
+APIs, the search and watchlist UI, live watchlist updates, rate limits and caching, and listing
+photos with a page for each property. Admin screens
 for properties and further security hardening are planned but not built (see
 [What I'd do next](#what-id-do-next)). The full plan, including the build order and estimates, is
 in [PRD.md](PRD.md#delivery-plan-risks--open-questions).
@@ -261,7 +262,9 @@ there also requires `SEED_DEMO_PASSWORD`, so the published password is never use
 
 - **10,000 properties by default** (`SEED_COUNT=100000 make seed` for the `EXPLAIN` plans), written
   with `insert_all` in batches, about 2 s for 10k. `insert_all` skips callbacks on purpose, so
-  seeding never writes `property_events` or broadcasts.
+  seeding never broadcasts. The only `property_events` it writes are its own: a status change for each
+  listing it creates under offer, sold or withdrawn, and a price change or two for about one in five
+  listings with a price, so the history on a property page has something to show.
 - **Real places:** 120 suburb/postcode pairs across all 8 states and territories in
   `api/db/seeds/suburbs.csv` (NT postcodes keep their leading zero, e.g. `0800`). Street names,
   prices and room counts are generated per property type (land has no bedrooms, apartments have
@@ -273,8 +276,14 @@ there also requires `SEED_DEMO_PASSWORD`, so the published password is never use
   in Postgres), so the keyset cursor has ties to get right.
 - **Deterministic:** a fixed random seed, so the same `SEED_COUNT` gives the same rows, with listing dates relative to when you seeded. Ids come from the table's sequence, so they change on each reseed.
 - Built with Ruby's `Random` rather than Faker, since Faker is a development/test gem and street
-  names from its default locale don't look Australian. `image_url` is left empty; the UI shows a
-  placeholder.
+  names from its default locale don't look Australian.
+- **Agents, galleries and open homes:** 24 agents (three per state, at a made-up agency, with phone
+  numbers from the range the ACMA reserves for fiction and `example.com` emails), a gallery of the
+  rooms each listing has, and open homes in the three weeks after you seed. Reseed to get new ones.
+- **A photo and a write-up for every listing:** `image_url` points at one of 35 outside photos in
+  `web/public/images/properties/` (from Unsplash, credited in `CREDITS.md` there) chosen to suit the
+  property type, and `description` is three short generated paragraphs. If your database was
+  seeded before these existed, run `make seed` again to get them.
 
 ## Folder structure
 
@@ -365,6 +374,10 @@ fit the existing ones was written, in the order the features were built:
 7. **Live updates:** `WatchlistChannel`, `PropertyChangeNotifier` and `lib/tasks/demo.rake` went into
    folders that already existed.
 8. **Rate limits and caching:** `SearchCache`, again in `services/`.
+9. **Property page and photos:** more resources (`PropertyDetailResource`, `PropertyEventResource`,
+   `AgentResource`, `InspectionResource`), three small models (`Agent`, `Inspection`,
+   `PropertyPhoto`), `db/seeds/listing_extras.rb`, and `web/public/images/properties/` for the listing photos, which the
+   web app serves as static files.
 
 ### `web/src/`
 
@@ -429,7 +442,7 @@ down and why, the rules a change must keep, and the known gaps) lives in
   never sees the token.
 - CSRF protection is `SameSite=Lax` plus an `Origin` check against `FRONTEND_ORIGIN` on every write.
 - Trade-off: nothing is stored server-side, so a token copied before logout stays valid until it
-  expires. Revocation and sliding renewal are [planned](PRD.md#milestone-9--nice-to-have-hardening).
+  expires. Revocation and sliding renewal are [planned](PRD.md#security-hardening).
 - Being signed out from elsewhere (a 401, or a logout in another tab) clears the user's data and
   shows a toast; only a protected page goes to `/login?next=…`.
 - Why each choice, what was rejected, and the code map: [docs/features/auth.md](docs/features/auth.md).
@@ -561,6 +574,12 @@ Every piece of state has exactly one owner, picked by where it has to survive:
   "Back to top". Every loaded batch stays cached, so Back returns to the same place.
 - The watch toggle changes the card at once. Clicks for one property run in order, and a failure goes
   back to the last state the server confirmed, with a toast.
+- Every card has a photo and opens the property's page: a photo gallery, description, details, price
+  and status history, the agent with call and email links, upcoming open homes (in the listing's
+  local time), a Google Maps link and the watch toggle. The address is the card's one link,
+  stretched over the whole card, so the Watch button still only toggles. Opened from a card, the
+  page shows the card's details at once while the rest loads; "Back to results" returns to the same
+  place. Details: [docs/features/property-detail.md](docs/features/property-detail.md).
 - Toasts by default; field errors and a search that fails to load stay on the page.
 - Accessibility: the watch button is a real toggle (`aria-pressed`), toasts are announced
   (`aria-live`), and selected chips show a tick, not just a colour.
@@ -606,6 +625,8 @@ _To be written as I go._
 - Production web image behind nginx with a strict CSP, HSTS and the usual security headers; `pnpm audit`, gitleaks and Dependabot in CI.
 - Offset paging mode for API clients, saved searches with alerts, and PostGIS radius search.
 - Admin extras: CSV import, image uploads, an audit log of admin changes.
+- On the property page: an enquiry form, floor plans, a full-screen photo viewer, "add to calendar"
+  for open homes, and an embedded map.
 - Move `PropertyChangeNotifier` into a Solid Queue job with retries once fan-out grows; lograge JSON logs.
 
 ---

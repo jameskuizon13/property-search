@@ -34,6 +34,24 @@
         "cd web && API_PROXY_TARGET=http://localhost:3001 exec pnpm dev --port 5174 --strictPort"
       ],
       "port": 5174
+    },
+    {
+      "name": "api-qa",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd api && FRONTEND_ORIGIN=http://127.0.0.1:5175 exec bin/rails server -b 127.0.0.1 -p 3002 -P tmp/pids/qa-server.pid"
+      ],
+      "port": 3002
+    },
+    {
+      "name": "web-qa",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd web && API_PROXY_TARGET=http://127.0.0.1:3002 exec pnpm dev --host 127.0.0.1 --port 5175 --strictPort"
+      ],
+      "port": 5175
     }
   ]
 }

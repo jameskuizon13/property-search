@@ -1,5 +1,12 @@
 class Property < ApplicationRecord
   STATES = %w[NSW VIC QLD WA SA TAS ACT NT].freeze
+  # Each state's local time, for open-home times (shown in the listing's time,
+  # not the viewer's).
+  TIME_ZONES = {
+    "NSW" => "Australia/Sydney", "VIC" => "Australia/Melbourne", "QLD" => "Australia/Brisbane",
+    "WA" => "Australia/Perth", "SA" => "Australia/Adelaide", "TAS" => "Australia/Hobart",
+    "ACT" => "Australia/Sydney", "NT" => "Australia/Darwin"
+  }.freeze
   STATUSES = %w[for_sale under_offer sold withdrawn].freeze
   # Search only ever shows these. Property.active turns them into
   # `status IN ('for_sale', 'under_offer')`, the exact predicate of the
@@ -20,6 +27,10 @@ class Property < ApplicationRecord
     "retirement_living" => "Retirement Living"
   }.freeze
 
+  # Photos are the web app's own static files (web/public/images); see
+  # docs/features/property-detail.md.
+  PHOTO_PATH = %r{\A/images/[a-z0-9/_-]+\.(webp|jpe?g|png)\z}
+
   SMALLINT_MAX = 32_767
   INTEGER_MAX = 2_147_483_647
   # $1 billion: far above any listing, and keeps search's price * 100 math
@@ -37,6 +48,11 @@ class Property < ApplicationRecord
   # are steered to the softer option, status `withdrawn`, which keeps it.
   has_many :property_events
   has_many :watchlist_items
+  has_many :inspections
+  has_many :photos, -> { order(:position) }, class_name: "PropertyPhoto", inverse_of: :property
+  # Optional: a listing can exist before an agent is assigned (and keeps going
+  # if its agent is removed; the FK nullifies).
+  belongs_to :agent, optional: true
 
   scope :active, -> { where(status: ACTIVE_STATUSES) }
 
@@ -71,6 +87,8 @@ class Property < ApplicationRecord
   validates :latitude, numericality: { in: -90..90 }, allow_nil: true
   validates :longitude, numericality: { in: -180..180 }, allow_nil: true
   validates :listed_at, presence: true
+  validates :description, length: { maximum: 5_000 }
+  validates :image_url, format: { with: PHOTO_PATH }, length: { maximum: 500 }, allow_nil: true
 
   # "$850,000" from 85_000_000 cents.
   def self.format_price(cents)

@@ -1,9 +1,9 @@
-# Milestone 8 — Admin UI for properties: implementation plan
+# Milestone 9 — Admin UI for properties: implementation plan
 
-Branch: `feature/milestone-8-admin`, stacked on Milestone 7's branch while those PRs are open.
+Branch: `feature/milestone-9-admin`, stacked on Milestone 7's branch while those PRs are open.
 Source: PRD user story 7, FR-7, API design (admin rows + paragraph), Frontend architecture (admin
 routes, `admin/` feature folder, `requireAdmin`), Data model (`updated_at` index), Testing strategy
-(admin request specs, `PropertyForm` tests), Delivery plan → Milestone 8.
+(admin request specs, `PropertyForm` tests), Delivery plan → Milestone 9.
 
 The seed already creates `admin@example.com` (role `admin`); `GET /me` already returns `role`.
 
@@ -103,7 +103,7 @@ endpoint, price_display default, delete confirmation as inline panel).
 
 ## Out of scope
 
-User/role management, CSV import, image uploads, audit log (PRD out of scope / Milestone 9 list);
+User/role management, CSV import, image uploads, audit log (PRD out of scope / Milestone 10 list);
 notifying watchers when a property is deleted (it simply disappears from their watchlist on next
 refetch; documented as a gap).
 

@@ -5,14 +5,15 @@ import { authKeys } from './useMe'
 
 /**
  * Forget everything that belonged to the signed-in user: the socket, the user,
- * the watchlist, and the `watched` flags in search results (those refetch, as
- * search is public). Shared by logout, a 401, and a sign-out in another tab.
+ * the watchlist, and the `watched` flags in search results and on property
+ * pages (those refetch, as both are public). Shared by logout, a 401, and a sign-out in another tab.
  */
 export function clearUserData(queryClient: QueryClient) {
   disconnectConsumer()
   queryClient.setQueryData(authKeys.me, null)
   queryClient.removeQueries({ queryKey: watchlistKeys.all })
   void queryClient.resetQueries({ queryKey: propertyKeys.lists() })
+  void queryClient.resetQueries({ queryKey: propertyKeys.details() })
 }
 
 const CHANNEL = 'auth'

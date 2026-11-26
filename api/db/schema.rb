@@ -10,10 +10,29 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_26_000004) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
+
+  create_table "agents", force: :cascade do |t|
+    t.string "name", null: false
+    t.string "agency", null: false
+    t.string "phone", null: false
+    t.string "email", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "inspections", force: :cascade do |t|
+    t.bigint "property_id", null: false
+    t.datetime "starts_at", null: false
+    t.datetime "ends_at", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["property_id", "starts_at"], name: "index_inspections_on_property_id_and_starts_at"
+    t.check_constraint "ends_at > starts_at", name: "inspections_ends_after_start"
+  end
 
   create_table "properties", force: :cascade do |t|
     t.string "street_address", null: false
@@ -35,6 +54,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
     t.integer "lock_version", default: 0, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.text "description"
+    t.bigint "agent_id"
+    t.index ["agent_id"], name: "index_properties_on_agent_id"
     t.index ["listed_at", "id"], name: "index_properties_active_on_listed_at_id", order: :desc, where: "((status)::text = ANY ((ARRAY['for_sale'::character varying, 'under_offer'::character varying])::text[]))"
     t.index ["postcode"], name: "index_properties_on_postcode_pattern", opclass: :text_pattern_ops
     t.index ["price_cents", "id"], name: "index_properties_active_on_price_cents_id", where: "(((status)::text = ANY ((ARRAY['for_sale'::character varying, 'under_offer'::character varying])::text[])) AND (price_cents IS NOT NULL))"
@@ -62,6 +84,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
     t.check_constraint "kind::text = ANY (ARRAY['price_changed'::character varying, 'status_changed'::character varying]::text[])", name: "property_events_kind_check"
   end
 
+  create_table "property_photos", force: :cascade do |t|
+    t.bigint "property_id", null: false
+    t.string "url", null: false
+    t.string "caption", null: false
+    t.integer "position", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["property_id", "position"], name: "index_property_photos_on_property_id_and_position", unique: true
+    t.check_constraint "\"position\" >= 1", name: "property_photos_position_positive"
+  end
+
   create_table "users", force: :cascade do |t|
     t.string "email", null: false
     t.string "password_digest", null: false
@@ -82,7 +115,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_25_000006) do
     t.index ["user_id", "property_id"], name: "index_watchlist_items_on_user_id_and_property_id", unique: true
   end
 
+  add_foreign_key "inspections", "properties", on_delete: :cascade
+  add_foreign_key "properties", "agents", on_delete: :nullify
   add_foreign_key "property_events", "properties", on_delete: :cascade
+  add_foreign_key "property_photos", "properties", on_delete: :cascade
   add_foreign_key "watchlist_items", "properties", on_delete: :cascade
   add_foreign_key "watchlist_items", "users", on_delete: :cascade
 end

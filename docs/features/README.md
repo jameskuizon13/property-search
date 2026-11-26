@@ -10,6 +10,7 @@ before changing a feature; update it in the same change.
 | [property-data.md](property-data.md) | The `properties` and `property_events` tables, models, enums, constraints, seed data, `GET /property_types` |
 | [search.md](search.md) | `GET /properties`, `Properties::SearchQuery`, the keyset cursor, indexes, the search page, filters in the URL, the infinite list |
 | [watchlist.md](watchlist.md) | Watchlist API, the watch toggle, the watchlist page |
+| [property-detail.md](property-detail.md) | Listing photos, the clickable card, `GET /properties/:id` and the property page |
 | [live-updates.md](live-updates.md) | Change events, `PropertyChangeNotifier`, `WatchlistChannel`, the client's cache patching, demo rake tasks |
 | [performance.md](performance.md) | Rate limits, cached counts, HTTP caching, N+1 detection, cheap long lists |
 

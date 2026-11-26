@@ -57,9 +57,10 @@ export function useWatchlistChannel() {
         setStatus('connected')
         if (!reconnected) return
         // Updates sent while the socket was down are gone: refetch the
-        // watchlist, and mark search stale so it refreshes on its next view
-        // instead of refetching every loaded batch now.
+        // watchlist and any open property page, and mark search stale so it
+        // refreshes on its next view instead of refetching every loaded batch now.
         void queryClient.invalidateQueries({ queryKey: watchlistKeys.all })
+        void queryClient.invalidateQueries({ queryKey: propertyKeys.details() })
         void queryClient.invalidateQueries({ queryKey: propertyKeys.lists(), refetchType: 'none' })
       },
       disconnected({ willAttemptReconnect }: { willAttemptReconnect: boolean }) {

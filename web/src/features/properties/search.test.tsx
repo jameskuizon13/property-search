@@ -102,7 +102,7 @@ describe('search results', () => {
     server.use(signedOut())
     renderApp('/search?sort=price_asc')
 
-    expect(await screen.findByText(/Price sorts leave out listings without a price/)).toBeInTheDocument()
+    expect(await screen.findByText(/Price sorts leave out listings with no price shown/)).toBeInTheDocument()
   })
 })
 
@@ -217,6 +217,17 @@ describe('filters', () => {
     await screen.findByRole('heading', { name: 'No properties match your search' })
     expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument()
     expect(queryClient.getQueryCache().find({ queryKey: ['properties', 'list', {}], exact: true })).toBeDefined()
+  })
+
+  it('explains “under offer” next to its filter without ticking the box', async () => {
+    server.use(signedOut())
+    const user = userEvent.setup()
+    renderApp('/search')
+
+    await user.click(await screen.findByRole('button', { name: 'What does under offer mean?' }))
+
+    expect(screen.getByText(/the seller has accepted an offer/i)).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Exclude under offer' })).not.toBeChecked()
   })
 
   it('writes property types and the exclude toggles to the URL', async () => {

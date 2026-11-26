@@ -30,7 +30,7 @@ export function SearchPage() {
   const headingRef = useRef<HTMLHeadingElement>(null)
   const apiFilters = useMemo(() => toApiFilters(filters), [filters])
   const query = useSearchProperties(apiFilters)
-  const renderItem = useRenderProperty()
+  const renderItem = useRenderProperty('search')
 
   const updateFilters = useCallback(
     (patch: FilterPatch, { replace = false } = {}) =>
@@ -47,7 +47,7 @@ export function SearchPage() {
       </h1>
       <FilterBar filters={filters} onChange={updateFilters} />
       {isPriceSort(filters) && (
-        <p className="text-sm text-slate-600">Price sorts leave out listings without a price (“Contact agent”).</p>
+        <p className="text-sm text-slate-600">Price sorts leave out listings with no price shown, such as “Contact agent” or “Price on application”.</p>
       )}
       <InfiniteResults
         query={query}

@@ -6,7 +6,7 @@ progress: `PRD.md`.
 
 ## Feature docs: read first, update in the same change
 
-`docs/features/` has one living doc per feature (`auth`, `property-data`, `search`, `watchlist`,
+`docs/features/` has one living doc per feature (`auth`, `property-data`, `property-detail`, `search`, `watchlist`,
 `live-updates`, `performance`). Each lists the code map, the rules that must stay true, a dated
 decision log (including what was rejected, and why) and known gaps.
 

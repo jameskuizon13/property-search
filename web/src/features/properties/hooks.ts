@@ -1,8 +1,10 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { propertyKeys } from '@/lib/queryKeys'
 import { nextCursor } from '@/lib/types'
-import { fetchProperties, fetchPropertyTypes, type PropertyTypeOption } from './api'
+import { fetchProperties, fetchProperty, fetchPropertyTypes, type PropertyTypeOption } from './api'
+import { findCachedProperty } from './cache'
 import type { SearchFilters } from './searchSchema'
+import type { PropertyDetail } from './types'
 
 /**
  * Search results in batches. A new filter object is a new query key, so
@@ -17,6 +19,35 @@ export function useSearchProperties(filters: SearchFilters) {
     initialPageParam: null as string | null,
     getNextPageParam: nextCursor,
     staleTime: 30_000,
+  })
+}
+
+/**
+ * One property's page. Opened from a card, it shows that card's data at once
+ * (placeholder data, with no description or history yet) while the full
+ * detail loads. The default retry policy already leaves a 404 alone.
+ */
+export function useProperty(id: number, { enabled = true } = {}) {
+  const queryClient = useQueryClient()
+  return useQuery({
+    enabled,
+    queryKey: propertyKeys.detail(id),
+    queryFn: ({ signal }) => fetchProperty(id, signal),
+    placeholderData: (): PropertyDetail | undefined => {
+      const card = findCachedProperty(queryClient, id)
+      return (
+        card && {
+          description: null,
+          history: [],
+          historyComplete: true,
+          photos: card.imageUrl ? [{ url: card.imageUrl, caption: 'Main photo' }] : [],
+          agent: null,
+          inspections: [],
+          timeZone: '',
+          ...card,
+        }
+      )
+    },
   })
 }
 

@@ -48,6 +48,14 @@ const watchlistRoute = createRoute({
   component: lazyRouteComponent(() => import('@/features/watchlist/WatchlistPage'), 'WatchlistPage'),
 })
 
+// Public, like search. The page checks the id itself and shows "not found"
+// for anything that isn't a plain positive integer.
+const propertyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/properties/$propertyId',
+  component: lazyRouteComponent(() => import('@/features/properties/PropertyPage'), 'PropertyPage'),
+})
+
 const authSearch = z.object({ next: z.string().optional() })
 
 // Signed-in users skip the login/signup pages and go straight to `next`.
@@ -72,7 +80,14 @@ const signupRoute = createRoute({
   component: SignupPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, searchRoute, watchlistRoute, loginRoute, signupRoute])
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  searchRoute,
+  propertyRoute,
+  watchlistRoute,
+  loginRoute,
+  signupRoute,
+])
 
 // Sign-outs from outside this tab (a 401, another tab logging out) are
 // handled in RootLayout by useSessionEvents.
@@ -91,6 +106,10 @@ export type AppRouter = ReturnType<typeof createAppRouter>
 declare module '@tanstack/react-router' {
   interface Register {
     router: AppRouter
+  }
+  interface HistoryState {
+    /** Set by a card's link: the list the property page was opened from, for its back link. */
+    from?: 'search' | 'watchlist'
   }
   interface StaticDataRouteOption {
     /** Set on routes guarded by requireAuth, so logout knows to leave them. */
