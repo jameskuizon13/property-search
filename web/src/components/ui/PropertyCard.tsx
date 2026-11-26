@@ -79,15 +79,18 @@ export function PropertyCard({ property, typeLabel, from, action }: Props) {
   return (
     <article
       aria-labelledby={headingId}
-      className="group relative flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-indigo-500"
+      className="group relative flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-[box-shadow,border-color] duration-200 hover:border-slate-300 hover:shadow-lg has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-indigo-500"
     >
-      <div className="relative aspect-[3/2] bg-slate-100">
-        {/* One, two or three columns (see InfiniteResults); max-w-6xl caps a column near 370 px. */}
-        <PropertyPhoto
-          src={property.imageUrl}
-          alt=""
-          sizes="(min-width: 1024px) 370px, (min-width: 640px) 50vw, 100vw"
-        />
+      <div className="relative aspect-[3/2] overflow-hidden bg-slate-100">
+        {/* The whole card reacts to hover, never the address alone: an underlined address reads as a map link. */}
+        <div className="h-full transition-transform duration-300 ease-out motion-safe:group-hover:scale-[1.03]">
+          {/* One, two or three columns (see InfiniteResults); max-w-6xl caps a column near 370 px. */}
+          <PropertyPhoto
+            src={property.imageUrl}
+            alt=""
+            sizes="(min-width: 1024px) 370px, (min-width: 640px) 50vw, 100vw"
+          />
+        </div>
         <StatusBadge status={property.status} className="absolute top-3 left-3" />
       </div>
       <div className="flex flex-1 flex-col gap-1 p-4">
@@ -102,7 +105,7 @@ export function PropertyCard({ property, typeLabel, from, action }: Props) {
               if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return
               rememberReturnFocus(`/properties/${property.id}`, router.state.location.state.__TSR_key)
             }}
-            className="after:absolute after:inset-0 after:content-[''] group-hover:underline focus:outline-none"
+            className="after:absolute after:inset-0 after:content-[''] focus:outline-none"
           >
             {property.streetAddress}
           </Link>
